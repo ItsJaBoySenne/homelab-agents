@@ -1,0 +1,4 @@
+#!/bin/sh
+# docker compose for this project from any directory: sudo ./dc ps -a
+cd "$(dirname "$0")" || exit 1
+exec docker compose "$@"

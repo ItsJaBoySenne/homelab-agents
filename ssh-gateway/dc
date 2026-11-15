@@ -1,0 +1,8 @@
+#!/bin/sh
+# docker compose for the gateway API with its base file, so commands stay short: sudo ./dc ps -a
+cd "$(dirname "$0")" || exit 1
+# The Proxmox CA certificates the gateway checks the nodes against (public certs; *.pem stays out of git).
+for f in proxmox-ca.pem pve2-ca.pem; do
+  [ -f "certs/$f" ] || [ ! -f "../agent-platform-starter/$f" ] || cp "../agent-platform-starter/$f" "certs/$f"
+done
+exec docker compose -f compose.yaml -f compose.tools-api.yaml "$@"

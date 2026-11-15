@@ -1,0 +1,9 @@
+{"step":"login -> overview stats","wall_ms":182,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":861}
+{"step":"Tasks view (25 rows)","wall_ms":102,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":1117}
+{"step":"Tasks next page","wall_ms":103,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":1114}
+{"step":"Tasks search q=nginx","wall_ms":405,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":1117}
+{"step":"Conversations view (list + newest thread)","wall_ms":254,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":3684}
+{"step":"open largest conversation (500 msgs, newest 100 shown)","wall_ms":145,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":3481}
+{"step":"re-render largest conversation (refresh button)","wall_ms":179,"long_tasks":0,"longest_ms":0,"long_total_ms":0,"dom_nodes":3481}
+{"step":"Knowledge view (notes + facts)","wall_ms":652,"long_tasks":1,"longest_ms":159,"long_total_ms":159,"dom_nodes":4502}
+{"step":"requests from Send until 15 s after switching to Knowledge (Conversations view hidden)","requests":{"/ui/api/threads/:id/messages":1,"/ui/api/threads/:id":1,"/ui/api/threads":1,"/ui/api/tasks/:id/events":1,"/ui/api/knowledge":1,"/ui/api/facts":1},"long_tasks":0,"long_total_ms":0,"thread_dom_nodes":2364}

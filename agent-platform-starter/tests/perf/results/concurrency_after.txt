@@ -1,0 +1,6 @@
+runs --runs 1 → {"probe p50/max": [null, null], "probe_ms": [2.6, 15.7], "run_post_ms": [4.9, 8.3], "run_first_content_ms": [7.3, 14.4], "run_done_ms": [292.5, 313.5]}
+runs --runs 5 → {"probe p50/max": [null, null], "probe_ms": [4.6, 38.4], "run_post_ms": [6.7, 46.0], "run_first_content_ms": [15.3, 66.7], "run_done_ms": [339.8, 416.5]}
+runs --runs 10 → {"probe p50/max": [null, null], "probe_ms": [13.1, 114.4], "run_post_ms": [16.8, 123.9], "run_first_content_ms": [53.1, 411.9], "run_done_ms": [511.6, 916.9]}
+readers --readers 20 --duration 20 → {"probe p50/max": [null, null], "probe_ms": [19.7, 60.1]}
+mixed --readers 20 --runs 5 → {"probe p50/max": [null, null], "probe_ms": [35.4, 72.9], "run_post_ms": [41.2, 103.9], "run_first_content_ms": [142.0, 273.0], "run_done_ms": [868.7, 1226.2]}
+sse --sse 50 → {"probe p50/max": [null, null], "probe_ms": [2.5, 27.8], "sse_update_delay_ms": [867.3, 911.4]}

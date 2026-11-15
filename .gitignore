@@ -1,0 +1,43 @@
+# Secrets and host-specific material stay on the host.
+.env
+.env.*
+!*.example
+!.env.example
+!.env.gateway.example
+*.pem
+*.crt
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+id_ecdsa*
+id_dsa*
+*.ppk
+infisical-*.json
+
+# Database dumps and backups (agent-platform-starter/backups/) stay on the host.
+backups/
+*.dump
+*.sql.gz
+*.bak
+*.tar.gz
+
+# Local data and test output
+data/
+*.sqlite
+*.sqlite3
+*.db
+shots/
+e2e-out/
+*.log
+
+# Python / Node / editors
+__pycache__/
+*.pyc
+.venv/
+venv/
+node_modules/
+.DS_Store
+.idea/
+.vscode/

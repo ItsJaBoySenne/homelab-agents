@@ -1,0 +1,426 @@
+psycopg.connect()+close over unix socket: 2.21 ms each
+
+=== expire_stale.status
+   Update on tasks  (cost=0.00..10610.96 rows=41 width=70) (actual time=16.610..16.611 rows=0 loops=1)
+     Buffers: shared hit=9409 read=201
+     ->  Seq Scan on tasks  (cost=0.00..10610.96 rows=41 width=70) (actual time=16.607..16.607 rows=0 loops=1)
+           Filter: ((status = 'human_approval_required'::text) AND (created_at < (now() - '72:00:00'::interval)))
+           Rows Removed by Filter: 50048
+           Buffers: shared hit=9409 read=201
+   Planning:
+     Buffers: shared hit=101 read=1
+   Planning Time: 0.329 ms
+   Execution Time: 16.664 ms
+
+=== expire_stale.command
+   Update on tasks  (cost=0.00..10736.70 rows=247 width=38) (actual time=16.342..16.342 rows=0 loops=1)
+     Buffers: shared hit=9441 read=169
+     ->  Seq Scan on tasks  (cost=0.00..10736.70 rows=247 width=38) (actual time=16.341..16.341 rows=0 loops=1)
+           Filter: (((pending_command ->> 'status'::text) = 'pending'::text) AND (created_at < (now() - '72:00:00'::interval)))
+           Rows Removed by Filter: 50048
+           Buffers: shared hit=9441 read=169
+   Planning:
+     Buffers: shared hit=3
+   Planning Time: 0.120 ms
+   Execution Time: 16.355 ms
+
+=== summary
+   Aggregate  (cost=10736.08..10736.10 rows=1 width=48) (actual time=21.424..21.424 rows=1 loops=1)
+     Buffers: shared hit=9473 read=137
+     ->  Seq Scan on tasks  (cost=0.00..10110.48 rows=50048 width=19) (actual time=0.004..6.332 rows=50048 loops=1)
+           Buffers: shared hit=9473 read=137
+   Planning:
+     Buffers: shared hit=35 read=1
+   Planning Time: 0.084 ms
+   Execution Time: 21.443 ms
+
+=== tasks.page1
+   Limit  (cost=11640.25..11643.28 rows=26 width=172) (actual time=464.088..467.162 rows=26 loops=1)
+     Buffers: shared hit=34676 read=3758 written=54
+     ->  Gather Merge  (cost=11640.25..16506.29 rows=41706 width=172) (actual time=464.087..467.158 rows=26 loops=1)
+           Workers Planned: 2
+           Workers Launched: 2
+           Buffers: shared hit=34676 read=3758 written=54
+           ->  Sort  (cost=10640.23..10692.36 rows=20853 width=172) (actual time=461.792..461.797 rows=26 loops=3)
+                 Sort Key: t.created_at DESC
+                 Sort Method: top-N heapsort  Memory: 38kB
+                 Buffers: shared hit=34676 read=3758 written=54
+                 Worker 0:  Sort Method: top-N heapsort  Memory: 45kB
+                 Worker 1:  Sort Method: top-N heapsort  Memory: 46kB
+                 ->  Hash Left Join  (cost=1.25..10045.87 rows=20853 width=172) (actual time=0.208..456.920 rows=16683 loops=3)
+                       Hash Cond: (t.agent_id = a.id)
+                       Buffers: shared hit=34602 read=3758 written=54
+                       ->  Parallel Seq Scan on tasks t  (cost=0.00..9818.53 rows=20853 width=509) (actual time=0.008..5.483 rows=16683 loops=3)
+                             Buffers: shared hit=9505 read=105 written=2
+                       ->  Hash  (cost=1.11..1.11 rows=11 width=28) (actual time=0.017..0.017 rows=11 loops=3)
+                             Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                             Buffers: shared hit=3
+                             ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (actual time=0.008..0.010 rows=11 loops=3)
+                                   Buffers: shared hit=3
+   Planning:
+     Buffers: shared hit=196 read=3
+   Planning Time: 0.394 ms
+   Execution Time: 467.231 ms
+
+=== tasks.offset49000
+   Limit  (cost=17407.92..17408.04 rows=1 width=172) (actual time=485.064..488.967 rows=26 loops=1)
+     Buffers: shared hit=38400 read=11, temp read=2392 written=2398
+     ->  Gather Merge  (cost=12541.88..17407.92 rows=41706 width=172) (actual time=472.484..487.630 rows=49026 loops=1)
+           Workers Planned: 2
+           Workers Launched: 2
+           Buffers: shared hit=38400 read=11, temp read=2392 written=2398
+           ->  Sort  (cost=11541.86..11593.99 rows=20853 width=172) (actual time=469.702..472.529 rows=16430 loops=3)
+                 Sort Key: t.created_at DESC
+                 Sort Method: external merge  Disk: 6424kB
+                 Buffers: shared hit=38400 read=11, temp read=2392 written=2398
+                 Worker 0:  Sort Method: external merge  Disk: 6320kB
+                 Worker 1:  Sort Method: external merge  Disk: 6392kB
+                 ->  Hash Left Join  (cost=1.25..10045.87 rows=20853 width=172) (actual time=0.164..453.889 rows=16683 loops=3)
+                       Hash Cond: (t.agent_id = a.id)
+                       Buffers: shared hit=38326 read=11
+                       ->  Parallel Seq Scan on tasks t  (cost=0.00..9818.53 rows=20853 width=509) (actual time=0.007..5.470 rows=16683 loops=3)
+                             Buffers: shared hit=9599 read=11
+                       ->  Hash  (cost=1.11..1.11 rows=11 width=28) (actual time=0.019..0.019 rows=11 loops=3)
+                             Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                             Buffers: shared hit=3
+                             ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (actual time=0.009..0.011 rows=11 loops=3)
+                                   Buffers: shared hit=3
+   Planning:
+     Buffers: shared hit=4
+   Planning Time: 0.129 ms
+   Execution Time: 489.703 ms
+
+=== tasks.status_failed
+   Limit  (cost=10391.60..10391.67 rows=26 width=172) (actual time=107.005..107.011 rows=26 loops=1)
+     Buffers: shared hit=11274
+     ->  Sort  (cost=10391.60..10400.60 rows=3600 width=172) (actual time=107.004..107.008 rows=26 loops=1)
+           Sort Key: t.created_at DESC
+           Sort Method: top-N heapsort  Memory: 45kB
+           Buffers: shared hit=11274
+           ->  Nested Loop Left Join  (cost=0.15..10288.99 rows=3600 width=172) (actual time=0.024..106.006 rows=3505 loops=1)
+                 Buffers: shared hit=11274
+                 ->  Seq Scan on tasks t  (cost=0.00..10173.04 rows=3600 width=509) (actual time=0.010..14.182 rows=3505 loops=1)
+                       Filter: (status = ANY ('{failed}'::text[]))
+                       Rows Removed by Filter: 46543
+                       Buffers: shared hit=9610
+                 ->  Memoize  (cost=0.15..0.17 rows=1 width=28) (actual time=0.000..0.000 rows=1 loops=3505)
+                       Cache Key: t.agent_id
+                       Cache Mode: logical
+                       Hits: 3494  Misses: 11  Evictions: 0  Overflows: 0  Memory Usage: 2kB
+                       Buffers: shared hit=20
+                       ->  Index Scan using agents_pkey on agents a  (cost=0.14..0.16 rows=1 width=28) (actual time=0.001..0.001 rows=1 loops=11)
+                             Index Cond: (id = t.agent_id)
+                             Buffers: shared hit=20
+   Planning:
+     Buffers: shared hit=56
+   Planning Time: 0.211 ms
+   Execution Time: 107.032 ms
+
+=== tasks.workspace_work
+   Limit  (cost=10711.26..10711.32 rows=26 width=172) (actual time=294.160..294.166 rows=26 loops=1)
+     Buffers: shared hit=15129
+     ->  Sort  (cost=10711.26..10741.40 rows=12058 width=172) (actual time=294.159..294.164 rows=26 loops=1)
+           Sort Key: t.created_at DESC
+           Sort Method: top-N heapsort  Memory: 45kB
+           Buffers: shared hit=15129
+           ->  Hash Left Join  (cost=1.25..10367.58 rows=12058 width=172) (actual time=0.018..290.799 rows=11941 loops=1)
+                 Hash Cond: (t.agent_id = a.id)
+                 Buffers: shared hit=15129
+                 ->  Seq Scan on tasks t  (cost=0.00..10235.60 rows=12058 width=509) (actual time=0.005..18.245 rows=11941 loops=1)
+                       Filter: (workspace = 'work'::text)
+                       Rows Removed by Filter: 38107
+                       Buffers: shared hit=9610
+                 ->  Hash  (cost=1.11..1.11 rows=11 width=28) (actual time=0.005..0.006 rows=11 loops=1)
+                       Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                       Buffers: shared hit=1
+                       ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (actual time=0.002..0.003 rows=11 loops=1)
+                             Buffers: shared hit=1
+   Planning:
+     Buffers: shared hit=4
+   Planning Time: 0.127 ms
+   Execution Time: 294.185 ms
+
+=== tasks.q_nomatch
+   Limit  (cost=10237.66..10237.67 rows=5 width=172) (actual time=1079.744..1079.745 rows=0 loops=1)
+     Buffers: shared hit=38158
+     ->  Sort  (cost=10237.66..10237.67 rows=5 width=172) (actual time=1079.742..1079.743 rows=0 loops=1)
+           Sort Key: t.created_at DESC
+           Sort Method: quicksort  Memory: 25kB
+           Buffers: shared hit=38158
+           ->  Nested Loop Left Join  (cost=0.00..10237.60 rows=5 width=172) (actual time=1079.735..1079.736 rows=0 loops=1)
+                 Join Filter: (a.id = t.agent_id)
+                 Buffers: shared hit=38158
+                 ->  Seq Scan on tasks t  (cost=0.00..10235.60 rows=5 width=509) (actual time=1079.734..1079.735 rows=0 loops=1)
+                       Filter: (task_text ~~* '%zzzznomatch%'::text)
+                       Rows Removed by Filter: 50048
+                       Buffers: shared hit=38158
+                 ->  Materialize  (cost=0.00..1.17 rows=11 width=28) (never executed)
+                       ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (never executed)
+   Planning:
+     Buffers: shared hit=4
+   Planning Time: 0.675 ms
+   Execution Time: 1079.762 ms
+
+=== threads.list
+   Limit  (cost=0.28..10416.97 rows=100 width=210) (actual time=0.771..5.593 rows=100 loops=1)
+     Buffers: shared hit=3446 read=745
+     ->  Nested Loop Left Join  (cost=0.28..208854.88 rows=2005 width=210) (actual time=0.771..5.583 rows=100 loops=1)
+           Join Filter: (a.id = t.agent_id)
+           Rows Removed by Join Filter: 653
+           Buffers: shared hit=3446 read=745
+           ->  Index Scan using threads_updated_idx on agent_threads t  (cost=0.28..230.18 rows=2005 width=194) (actual time=0.024..0.189 rows=100 loops=1)
+                 Buffers: shared hit=56 read=39
+           ->  Materialize  (cost=0.00..1.17 rows=11 width=28) (actual time=0.000..0.000 rows=7 loops=100)
+                 Buffers: shared hit=1
+                 ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (actual time=0.004..0.005 rows=11 loops=1)
+                       Buffers: shared hit=1
+           SubPlan 1
+             ->  Aggregate  (cost=103.88..103.89 rows=1 width=8) (actual time=0.053..0.053 rows=1 loops=100)
+                   Buffers: shared hit=3389 read=706
+                   ->  Nested Loop  (cost=4.68..103.88 rows=1 width=0) (actual time=0.052..0.052 rows=0 loops=100)
+                         Buffers: shared hit=3389 read=706
+                         ->  Bitmap Heap Scan on agent_thread_messages m  (cost=4.39..53.84 rows=6 width=40) (actual time=0.010..0.022 rows=12 loops=100)
+                               Recheck Cond: (thread_id = t.id)
+                               Filter: ((kind = 'approval_request'::text) OR ((kind IS DISTINCT FROM 'approval_request'::text) AND (role = 'assistant'::text)))
+                               Rows Removed by Filter: 12
+                               Heap Blocks: exact=353
+                               Buffers: shared hit=136 read=434
+                               ->  Bitmap Index Scan on thread_msgs_idx  (cost=0.00..4.38 rows=13 width=0) (actual time=0.005..0.005 rows=24 loops=100)
+                                     Index Cond: (thread_id = t.id)
+                                     Buffers: shared hit=118 read=99
+                         ->  Index Scan using tasks_pkey on tasks k  (cost=0.29..8.33 rows=1 width=112) (actual time=0.002..0.002 rows=0 loops=1175)
+                               Index Cond: (id = m.task_id)
+                               Filter: (((status = 'human_approval_required'::text) OR ((pending_command ->> 'status'::text) = 'pending'::text)) AND (((m.kind = 'approval_request'::text) AND (status = 'human_approval_required'::text)) OR ((m.kind IS DISTINCT FROM 'approval_request'::text) AND (m.role = 'assistant'::text) AND ((pending_command ->> 'status'::text) = 'pending'::text))))
+                               Rows Removed by Filter: 1
+                               Buffers: shared hit=3253 read=272
+   Planning:
+     Buffers: shared hit=125 read=15
+   Planning Time: 0.527 ms
+   Execution Time: 5.627 ms
+
+=== thread.largest
+   Sort  (cost=2091.92..2091.96 rows=13 width=1235) (actual time=6.300..6.324 rows=500 loops=1)
+     Sort Key: m.created_at, m.id
+     Sort Method: quicksort  Memory: 432kB
+     Buffers: shared hit=937 read=162
+     ->  Limit  (cost=1792.94..2091.68 rows=13 width=1235) (actual time=4.682..5.891 rows=500 loops=1)
+           Buffers: shared hit=934 read=162
+           InitPlan 1
+             ->  Limit  (cost=1781.13..1781.13 rows=1 width=24) (actual time=4.649..4.650 rows=1 loops=1)
+                   Buffers: shared hit=103 read=155
+                   ->  Sort  (cost=1781.13..1786.14 rows=2005 width=24) (actual time=4.648..4.649 rows=1 loops=1)
+                         Sort Key: (count(*)) DESC
+                         Sort Method: top-N heapsort  Memory: 25kB
+                         Buffers: shared hit=103 read=155
+                         ->  GroupAggregate  (cost=0.29..1771.10 rows=2005 width=24) (actual time=0.020..4.453 rows=2005 loops=1)
+                               Group Key: agent_thread_messages.thread_id
+                               Buffers: shared hit=100 read=155
+                               ->  Index Only Scan using thread_msgs_idx on agent_thread_messages  (cost=0.29..1623.06 rows=25598 width=16) (actual time=0.018..2.720 rows=25598 loops=1)
+                                     Heap Fetches: 0
+                                     Buffers: shared hit=100 read=155
+           ->  Nested Loop Left Join  (cost=11.81..310.55 rows=13 width=1235) (actual time=4.682..5.860 rows=500 loops=1)
+                 Buffers: shared hit=934 read=162
+                 ->  Nested Loop Left Join  (cost=0.58..164.17 rows=13 width=1190) (actual time=4.668..5.395 rows=500 loops=1)
+                       Buffers: shared hit=926 read=155
+                       ->  Index Scan Backward using thread_msgs_idx on agent_thread_messages m  (cost=0.29..56.17 rows=13 width=722) (actual time=4.660..4.758 rows=500 loops=1)
+                             Index Cond: (thread_id = (InitPlan 1).col1)
+                             Buffers: shared hit=176 read=155
+                       ->  Index Scan using tasks_pkey on tasks t  (cost=0.29..8.31 rows=1 width=484) (actual time=0.001..0.001 rows=0 loops=500)
+                             Index Cond: (id = m.task_id)
+                             Buffers: shared hit=750
+                 ->  Limit  (cost=11.24..11.24 rows=1 width=53) (actual time=0.001..0.001 rows=0 loops=500)
+                       Buffers: shared hit=8 read=7
+                       ->  Sort  (cost=11.24..11.24 rows=1 width=53) (actual time=0.001..0.001 rows=0 loops=500)
+                             Sort Key: e.created_at DESC
+                             Sort Method: quicksort  Memory: 25kB
+                             Buffers: shared hit=8 read=7
+                             ->  Result  (cost=4.30..11.23 rows=1 width=53) (actual time=0.000..0.000 rows=0 loops=500)
+                                   One-Time Filter: (m.kind = 'approval_request'::text)
+                                   Buffers: shared hit=8 read=7
+                                   ->  Bitmap Heap Scan on task_approval_events e  (cost=4.30..11.23 rows=1 width=53) (actual time=0.010..0.010 rows=1 loops=5)
+                                         Recheck Cond: (task_id = m.task_id)
+                                         Filter: (action = ANY ('{approved,rejected}'::text[]))
+                                         Rows Removed by Filter: 1
+                                         Heap Blocks: exact=5
+                                         Buffers: shared hit=8 read=7
+                                         ->  Bitmap Index Scan on task_approval_events_task_idx  (cost=0.00..4.30 rows=2 width=0) (actual time=0.007..0.007 rows=2 loops=5)
+                                               Index Cond: (task_id = m.task_id)
+                                               Buffers: shared hit=4 read=6
+   Planning:
+     Buffers: shared hit=119 read=6
+   Planning Time: 0.549 ms
+   Execution Time: 6.387 ms
+
+=== knowledge.home
+   Limit  (cost=1220.92..1221.17 rows=100 width=1426) (actual time=3.419..3.434 rows=100 loops=1)
+     Buffers: shared read=1024
+     ->  Sort  (cost=1220.92..1229.71 rows=3517 width=1426) (actual time=3.418..3.428 rows=100 loops=1)
+           Sort Key: updated_at DESC
+           Sort Method: top-N heapsort  Memory: 362kB
+           Buffers: shared read=1024
+           ->  Seq Scan on knowledge  (cost=0.00..1086.50 rows=3517 width=1426) (actual time=0.011..2.951 rows=3517 loops=1)
+                 Filter: (workspace = 'home'::text)
+                 Rows Removed by Filter: 1483
+                 Buffers: shared read=1024
+   Planning:
+     Buffers: shared hit=60 read=6
+   Planning Time: 0.251 ms
+   Execution Time: 3.448 ms
+
+=== knowledge.q
+   Limit  (cost=1219.35..1219.60 rows=100 width=24) (actual time=87.861..87.871 rows=100 loops=1)
+     Buffers: shared hit=1137 read=25
+     ->  Sort  (cost=1219.35..1226.41 rows=2822 width=24) (actual time=87.860..87.864 rows=100 loops=1)
+           Sort Key: updated_at DESC
+           Sort Method: top-N heapsort  Memory: 37kB
+           Buffers: shared hit=1137 read=25
+           ->  Seq Scan on knowledge  (cost=0.00..1111.50 rows=2822 width=24) (actual time=0.039..87.345 rows=3465 loops=1)
+                 Filter: ((workspace = 'home'::text) AND ((title ~~* '%nginx%'::text) OR (body ~~* '%nginx%'::text)))
+                 Rows Removed by Filter: 1535
+                 Buffers: shared hit=1137 read=25
+   Planning Time: 0.897 ms
+   Execution Time: 87.887 ms
+
+=== facts.page
+   Limit  (cost=0.43..21.60 rows=26 width=962) (actual time=0.033..0.178 rows=26 loops=1)
+     Buffers: shared hit=18 read=40
+     ->  Nested Loop Left Join  (cost=0.43..14630.44 rows=17966 width=962) (actual time=0.033..0.176 rows=26 loops=1)
+           Buffers: shared hit=18 read=40
+           ->  Index Scan using agent_memories_workspace_idx on agent_memories m  (cost=0.29..14193.08 rows=17966 width=966) (actual time=0.027..0.152 rows=26 loops=1)
+                 Index Cond: (workspace = 'home'::text)
+                 Filter: (kind IS DISTINCT FROM 'task'::text)
+                 Rows Removed by Filter: 22
+                 Buffers: shared read=40
+           ->  Memoize  (cost=0.15..0.16 rows=1 width=28) (actual time=0.001..0.001 rows=1 loops=26)
+                 Cache Key: m.agent_id
+                 Cache Mode: logical
+                 Hits: 17  Misses: 9  Evictions: 0  Overflows: 0  Memory Usage: 2kB
+                 Buffers: shared hit=18
+                 ->  Index Scan using agents_pkey on agents a  (cost=0.14..0.15 rows=1 width=28) (actual time=0.001..0.001 rows=1 loops=9)
+                       Index Cond: (id = m.agent_id)
+                       Buffers: shared hit=18
+   Planning:
+     Buffers: shared hit=93 read=7
+   Planning Time: 0.357 ms
+   Execution Time: 0.206 ms
+
+=== facts.counts
+   Aggregate  (cost=5124.31..5124.32 rows=1 width=24) (actual time=12.146..12.147 rows=1 loops=1)
+     Buffers: shared hit=322 read=3903
+     ->  Seq Scan on agent_memories  (cost=0.00..4675.16 rows=17966 width=17) (actual time=0.006..9.689 rows=16948 loops=1)
+           Filter: ((kind IS DISTINCT FROM 'task'::text) AND (workspace = 'home'::text))
+           Rows Removed by Filter: 13063
+           Buffers: shared hit=322 read=3903
+   Planning:
+     Buffers: shared hit=6
+   Planning Time: 0.059 ms
+   Execution Time: 12.159 ms
+
+=== agents.list
+   Sort  (cost=76258.49..76258.52 rows=11 width=704) (actual time=31.397..31.399 rows=11 loops=1)
+     Sort Key: a.name
+     Sort Method: quicksort  Memory: 32kB
+     Buffers: shared hit=25362
+     ->  Seq Scan on agents a  (cost=0.00..76258.30 rows=11 width=704) (actual time=0.042..31.370 rows=11 loops=1)
+           Buffers: shared hit=25359
+           SubPlan 1
+             ->  Aggregate  (cost=172.83..172.84 rows=1 width=8) (actual time=0.415..0.415 rows=1 loops=11)
+                   Buffers: shared hit=280
+                   ->  Index Only Scan using tasks_agent_created_idx on tasks t  (cost=0.41..164.77 rows=3225 width=0) (actual time=0.008..0.289 rows=3223 loops=11)
+                         Index Cond: (agent_id = a.id)
+                         Heap Fetches: 67
+                         Buffers: shared hit=280
+           SubPlan 2
+             ->  Aggregate  (cost=6759.62..6759.63 rows=1 width=32) (actual time=2.434..2.434 rows=1 loops=11)
+                   Buffers: shared hit=25078
+                   ->  Bitmap Heap Scan on tasks t_1  (cost=105.41..6751.55 rows=3225 width=6) (actual time=0.420..1.747 rows=3223 loops=11)
+                         Recheck Cond: (agent_id = a.id)
+                         Heap Blocks: exact=24827
+                         Buffers: shared hit=25078
+                         ->  Bitmap Index Scan on tasks_agent_created_idx  (cost=0.00..104.60 rows=3225 width=0) (actual time=0.205..0.205 rows=3223 loops=11)
+                               Index Cond: (agent_id = a.id)
+                               Buffers: shared hit=251
+   Planning:
+     Buffers: shared hit=29
+   Planning Time: 0.109 ms
+   Execution Time: 31.423 ms
+
+=== memory.retrieve
+   Limit  (cost=0.29..209.91 rows=400 width=986) (actual time=0.018..1.493 rows=400 loops=1)
+     Buffers: shared hit=63 read=330
+     ->  Index Scan using agent_memories_workspace_idx on agent_memories  (cost=0.29..14125.69 rows=26954 width=986) (actual time=0.017..1.469 rows=400 loops=1)
+           Index Cond: (workspace = 'home'::text)
+           Buffers: shared hit=63 read=330
+   Planning:
+     Buffers: shared hit=6
+   Planning Time: 0.077 ms
+   Execution Time: 1.525 ms
+
+=== tasks.rewrite_page1
+   Nested Loop Left Join  (cost=11412.91..11421.55 rows=26 width=172) (actual time=19.988..23.404 rows=26 loops=1)
+     Join Filter: (a.id = tasks.agent_id)
+     Rows Removed by Join Filter: 286
+     Buffers: shared hit=9730 read=33
+     ->  Limit  (cost=11412.91..11415.95 rows=26 width=725) (actual time=19.734..19.808 rows=26 loops=1)
+           Buffers: shared hit=9651 read=33
+           ->  Gather Merge  (cost=11412.91..16278.95 rows=41706 width=725) (actual time=19.732..19.804 rows=26 loops=1)
+                 Workers Planned: 2
+                 Workers Launched: 2
+                 Buffers: shared hit=9651 read=33
+                 ->  Sort  (cost=10412.89..10465.02 rows=20853 width=725) (actual time=17.524..17.527 rows=26 loops=3)
+                       Sort Key: tasks.created_at DESC
+                       Sort Method: top-N heapsort  Memory: 32kB
+                       Buffers: shared hit=9651 read=33
+                       Worker 0:  Sort Method: top-N heapsort  Memory: 43kB
+                       Worker 1:  Sort Method: top-N heapsort  Memory: 45kB
+                       ->  Parallel Seq Scan on tasks  (cost=0.00..9818.53 rows=20853 width=725) (actual time=0.009..10.417 rows=16683 loops=3)
+                             Buffers: shared hit=9577 read=33
+     ->  Materialize  (cost=0.00..1.17 rows=11 width=28) (actual time=0.000..0.001 rows=11 loops=26)
+           Buffers: shared hit=1
+           ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (actual time=0.006..0.007 rows=11 loops=1)
+                 Buffers: shared hit=1
+   Planning:
+     Buffers: shared hit=4
+   Planning Time: 0.120 ms
+   Execution Time: 23.432 ms
+
+=== tasks.rewrite_offset49000
+   Nested Loop Left Join  (cost=23883.09..23884.47 rows=1 width=172) (actual time=48.490..52.512 rows=26 loops=1)
+     Join Filter: (a.id = tasks.agent_id)
+     Rows Removed by Join Filter: 190
+     Buffers: shared hit=9710, temp read=3083 written=3092
+     ->  Limit  (cost=23883.09..23883.20 rows=1 width=725) (actual time=48.461..52.288 rows=26 loops=1)
+           Buffers: shared hit=9684, temp read=3083 written=3092
+           ->  Gather Merge  (cost=19017.05..23883.09 rows=41706 width=725) (actual time=27.195..50.858 rows=49026 loops=1)
+                 Workers Planned: 2
+                 Workers Launched: 2
+                 Buffers: shared hit=9684, temp read=3083 written=3092
+                 ->  Sort  (cost=18017.02..18069.16 rows=20853 width=725) (actual time=25.026..28.815 rows=16422 loops=3)
+                       Sort Key: tasks.created_at DESC
+                       Sort Method: external merge  Disk: 10592kB
+                       Buffers: shared hit=9684, temp read=3083 written=3092
+                       Worker 0:  Sort Method: external merge  Disk: 7048kB
+                       Worker 1:  Sort Method: external merge  Disk: 7024kB
+                       ->  Parallel Seq Scan on tasks  (cost=0.00..9818.53 rows=20853 width=725) (actual time=0.013..8.977 rows=16683 loops=3)
+                             Buffers: shared hit=9610
+     ->  Seq Scan on agents a  (cost=0.00..1.11 rows=11 width=28) (actual time=0.001..0.001 rows=8 loops=26)
+           Buffers: shared hit=26
+   Planning:
+     Buffers: shared hit=4
+   Planning Time: 0.126 ms
+   Execution Time: 53.988 ms
+
+=== sse.poll
+   Index Scan using tasks_pkey on tasks  (cost=0.49..8.51 rows=1 width=1832) (actual time=0.014..0.015 rows=1 loops=1)
+     Index Cond: (id = (InitPlan 1).col1)
+     Buffers: shared hit=5
+     InitPlan 1
+       ->  Limit  (cost=0.00..0.20 rows=1 width=16) (actual time=0.007..0.007 rows=1 loops=1)
+             Buffers: shared hit=2
+             ->  Seq Scan on tasks tasks_1  (cost=0.00..10110.48 rows=50048 width=16) (actual time=0.006..0.006 rows=1 loops=1)
+                   Buffers: shared hit=2
+   Planning:
+     Buffers: shared hit=7 read=3
+   Planning Time: 0.130 ms
+   Execution Time: 0.024 ms
+

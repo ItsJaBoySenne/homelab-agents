@@ -1,0 +1,160 @@
+# Gateway, backend and browser tests on every push and pull request to main.
+# No secrets: the suites mock OpenRouter, TypeSafe, Infisical and SSH themselves.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
+  PLAYWRIGHT_VERSION: "1.48.2"
+
+jobs:
+  gateway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ssh-gateway
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ssh-gateway/Dockerfile.api
+      - run: pip install 'paramiko>=3.5,<5'
+      - name: Gateway suites
+        run: |
+          rc=0
+          for t in tests/test_*.py; do
+            echo "::group::$t"
+            if python "$t"; then echo "::endgroup::"; else echo "::endgroup::"; echo "::error::$t failed"; rc=1; fi
+          done
+          exit $rc
+
+  backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: agents
+          POSTGRES_PASSWORD: agents
+          POSTGRES_DB: hla_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agents -d hla_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Throwaway service database: the suite drops and recreates its public schema.
+      TEST_DATABASE_URL: postgresql://agents:agents@localhost:5432/hla_test
+      I_UNDERSTAND_THIS_WIPES_TEST_DB: "1"
+    defaults:
+      run:
+        working-directory: agent-platform-starter
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent-platform-starter/requirements.txt
+      - run: pip install -r requirements.txt 'paramiko>=3.5,<5'
+      - run: python tests/test_thread_approval.py
+      - run: python tests/test_audit_recheck.py
+      - run: python tests/test_providers.py
+      - run: python tests/test_engines.py
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: agents
+          POSTGRES_PASSWORD: agents
+          POSTGRES_DB: hla_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agents -d hla_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://agents:agents@localhost:5432/hla_test
+      I_UNDERSTAND_THIS_WIPES_TEST_DB: "1"
+      DEV_PORT: "8765"
+      DEV_DELAY: "1"
+      BASE: http://127.0.0.1:8765
+      SHOTS: ${{ github.workspace }}/e2e-out/shots
+    defaults:
+      run:
+        working-directory: agent-platform-starter
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: actions/setup-python@v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent-platform-starter/requirements.txt
+      - run: pip install -r requirements.txt 'paramiko>=3.5,<5'
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "22"
+      - name: Cache npm and Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4.2.3
+        with:
+          path: |
+            ~/.npm
+            ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+      - name: Install Playwright
+        working-directory: agent-platform-starter/tests/e2e
+        run: |
+          npm install --no-save --no-audit --no-fund "playwright@$PLAYWRIGHT_VERSION"
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = true ]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+      - name: Start preview server
+        run: |
+          mkdir -p "$SHOTS"
+          python tests/e2e/preview_server.py > "$GITHUB_WORKSPACE/e2e-out/preview.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/e2e-out/preview.pid"
+          for _ in $(seq 1 120); do
+            grep -q '^READY' "$GITHUB_WORKSPACE/e2e-out/preview.log" && exit 0
+            kill -0 "$(cat "$GITHUB_WORKSPACE/e2e-out/preview.pid")" 2>/dev/null || break
+            sleep 0.5
+          done
+          echo "::error::preview server did not become ready"; cat "$GITHUB_WORKSPACE/e2e-out/preview.log"; exit 1
+      - name: Browser end-to-end
+        working-directory: agent-platform-starter/tests/e2e
+        run: node e2e.js 2>&1 | tee "$GITHUB_WORKSPACE/e2e-out/e2e.log"; exit "${PIPESTATUS[0]}"
+      - name: Stop preview server
+        if: always()
+        run: |
+          pidfile="$GITHUB_WORKSPACE/e2e-out/preview.pid"
+          if [ -f "$pidfile" ]; then kill "$(cat "$pidfile")" 2>/dev/null || true; fi
+      - name: Upload screenshots and logs
+        if: failure()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: e2e-output
+          path: e2e-out/
+          retention-days: 7
+          if-no-files-found: ignore

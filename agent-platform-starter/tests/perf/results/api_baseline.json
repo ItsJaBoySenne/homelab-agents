@@ -1,0 +1,194 @@
+[
+ {
+  "endpoint": "summary",
+  "path": "/ui/api/summary",
+  "p50": 21.97764950687997,
+  "p95": 29.398171027423814,
+  "max": 30.505906994221732,
+  "kb": 0.1943359375
+ },
+ {
+  "endpoint": "tasks (page 1)",
+  "path": "/ui/api/tasks?limit=25&offset=0",
+  "p50": 511.86784700257704,
+  "p95": 524.9679549888242,
+  "max": 561.5418299857993,
+  "kb": 14.5400390625
+ },
+ {
+  "endpoint": "tasks status=failed",
+  "path": "/ui/api/tasks?limit=25&offset=0&status=failed",
+  "p50": 143.09601350396406,
+  "p95": 147.47938900836743,
+  "max": 152.2221140039619,
+  "kb": 16.169921875
+ },
+ {
+  "endpoint": "tasks status=human_approval_required",
+  "path": "/ui/api/tasks?limit=25&status=human_approval_required",
+  "p50": 53.032004507258534,
+  "p95": 54.12167799659073,
+  "max": 54.48719800915569,
+  "kb": 16.0361328125
+ },
+ {
+  "endpoint": "tasks workspace=work",
+  "path": "/ui/api/tasks?limit=25&workspace=work",
+  "p50": 327.98613801423926,
+  "p95": 347.3963619908318,
+  "max": 350.6995000061579,
+  "kb": 16.1650390625
+ },
+ {
+  "endpoint": "tasks q=nginx",
+  "path": "/ui/api/tasks?limit=25&q=nginx",
+  "p50": 816.9205434969626,
+  "p95": 826.2410839961376,
+  "max": 855.6092640210409,
+  "kb": 14.5400390625
+ },
+ {
+  "endpoint": "tasks q=zzzz (no match)",
+  "path": "/ui/api/tasks?limit=25&q=zzzznomatch",
+  "p50": 1098.3211750135524,
+  "p95": 1158.0493290093727,
+  "max": 1163.082357001258,
+  "kb": 0.0283203125
+ },
+ {
+  "endpoint": "tasks offset=10000",
+  "path": "/ui/api/tasks?limit=25&offset=10000",
+  "p50": 521.7970244993921,
+  "p95": 543.3944989927113,
+  "max": 549.8751520062797,
+  "kb": 15.439453125
+ },
+ {
+  "endpoint": "tasks offset=49000",
+  "path": "/ui/api/tasks?limit=25&offset=49000",
+  "p50": 532.6924020046135,
+  "p95": 546.9543900107965,
+  "max": 570.9388749965001,
+  "kb": 16.4365234375
+ },
+ {
+  "endpoint": "task detail",
+  "path": "/ui/api/tasks/064b11a6-de0c-4fd8-87ca-12336fa4dd09",
+  "p50": 47.00113150465768,
+  "p95": 50.653790996875614,
+  "max": 51.35458000586368,
+  "kb": 13.5283203125
+ },
+ {
+  "endpoint": "threads (list)",
+  "path": "/ui/api/threads",
+  "p50": 48.26228448655456,
+  "p95": 51.46556199179031,
+  "max": 56.41969697899185,
+  "kb": 41.0224609375
+ },
+ {
+  "endpoint": "threads?workspace=home",
+  "path": "/ui/api/threads?workspace=home",
+  "p50": 47.74039550102316,
+  "p95": 48.928053001873195,
+  "max": 49.01409198646434,
+  "kb": 41.0732421875
+ },
+ {
+  "endpoint": "thread largest (500 msgs)",
+  "path": "/ui/api/threads/8cd29235-c3b7-4778-b9f5-7fb07b3fcd97",
+  "p50": 65.02768250356894,
+  "p95": 66.24427999486215,
+  "max": 74.86818000325002,
+  "kb": 677.669921875
+ },
+ {
+  "endpoint": "knowledge home",
+  "path": "/ui/api/knowledge?workspace=home",
+  "p50": 13.855576515197754,
+  "p95": 15.408297011163086,
+  "max": 16.356749983970076,
+  "kb": 353.4697265625
+ },
+ {
+  "endpoint": "knowledge q=nginx",
+  "path": "/ui/api/knowledge?workspace=home&q=nginx",
+  "p50": 99.29124549671542,
+  "p95": 104.44898199057207,
+  "max": 105.5917349876836,
+  "kb": 356.1416015625
+ },
+ {
+  "endpoint": "facts home",
+  "path": "/ui/api/facts?workspace=home&limit=25",
+  "p50": 19.77553599863313,
+  "p95": 20.95599699532613,
+  "max": 21.427970990771428,
+  "kb": 28.6025390625
+ },
+ {
+  "endpoint": "facts state=stale",
+  "path": "/ui/api/facts?workspace=home&state=stale&limit=25",
+  "p50": 19.783571988227777,
+  "p95": 20.693244005087763,
+  "max": 21.766558988019824,
+  "kb": 31.2041015625
+ },
+ {
+  "endpoint": "facts q=nginx",
+  "path": "/ui/api/facts?workspace=home&q=nginx&limit=25",
+  "p50": 20.61812901229132,
+  "p95": 21.399471996119246,
+  "max": 21.41356299398467,
+  "kb": 34.3623046875
+ },
+ {
+  "endpoint": "facts offset=5000",
+  "path": "/ui/api/facts?workspace=home&limit=25&offset=5000",
+  "p50": 27.97818198450841,
+  "p95": 28.985894023207948,
+  "max": 29.085107991704717,
+  "kb": 33.326171875
+ },
+ {
+  "endpoint": "policy",
+  "path": "/ui/api/policy",
+  "p50": 6.221998002729379,
+  "p95": 6.521086994325742,
+  "max": 6.584015995031223,
+  "kb": 2.173828125
+ },
+ {
+  "endpoint": "deployments",
+  "path": "/ui/api/deployments",
+  "p50": 1.6499650082550943,
+  "p95": 1.795710006263107,
+  "max": 1.8704920075833797,
+  "kb": 0.89453125
+ },
+ {
+  "endpoint": "sandbox",
+  "path": "/ui/api/sandbox",
+  "p50": 5.298848496749997,
+  "p95": 5.699678004020825,
+  "max": 5.779380997410044,
+  "kb": 0.134765625
+ },
+ {
+  "endpoint": "agents",
+  "path": "/ui/api/agents",
+  "p50": 41.465211514150724,
+  "p95": 47.513803001493216,
+  "max": 47.93542099650949,
+  "kb": 9.841796875
+ },
+ {
+  "endpoint": "session",
+  "path": "/ui/api/session",
+  "p50": 1.5588129899697378,
+  "p95": 1.627372985240072,
+  "max": 1.6834749840199947,
+  "kb": 0.1552734375
+ }
+]

@@ -1,0 +1,135 @@
+services:
+  agent-router:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:?Set DASHBOARD_PASSWORD in .env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/${POSTGRES_DB:-agent_platform}
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+      # Defaults for optional features; real values come from .env.
+      HLA_MAX_OUTPUT_TOKENS: ${HLA_MAX_OUTPUT_TOKENS:-0}
+      HLA_DEV_MAINTENANCE_RISK_EXCEPTION: ${HLA_DEV_MAINTENANCE_RISK_EXCEPTION:-false}
+      HLA_DEV_SECRET_WORKFLOW: ${HLA_DEV_SECRET_WORKFLOW:-false}
+      AGENT_SECRET_WRITER_ENABLED: ${AGENT_SECRET_WRITER_ENABLED:-false}
+      AGENT_SECRET_INFISICAL_URL: ${AGENT_SECRET_INFISICAL_URL:-}
+      AGENT_SECRET_PROJECT_ID: ${AGENT_SECRET_PROJECT_ID:-}
+      AGENT_SECRET_CLIENT_ID: ${AGENT_SECRET_CLIENT_ID:-}
+      AGENT_SECRET_CLIENT_SECRET: ${AGENT_SECRET_CLIENT_SECRET:-}
+      AGENT_SECRET_INFISICAL_CA: /app/infisical-ca.pem
+    volumes:
+      # HLA_ATTACHMENTS_V1: photos, files and documents of conversations, projects and tasks (attachments.py).
+      - agent_attachments:/data/attachments
+      # HLA_ENGINES_V1: Claude Code / Codex sign-ins (written only by the CLIs) and their per-run directories.
+      - engine_auth:/data/engines
+    # The engine CLIs keep small temporary files (sockets, locks) in /tmp; the root file system stays read-only.
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      # HLA_LISTEN_ADDRESS (in .env): the host address the dashboard/API listens on, e.g. your VM's LAN IP for a
+      # reverse proxy on another host. Defaults to localhost only.
+      - "${HLA_LISTEN_ADDRESS:-127.0.0.1}:8088:8080"
+    # hla-tool-net reaches the SSH gateway API (created by ../ssh-gateway).
+    networks:
+      - default
+      - hla_tool_net
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Optional: when PROXMOX_API_URL uses a name your DNS does not resolve, map it here, e.g.
+    # extra_hosts:
+    #   - "proxmox.home.arpa:192.168.1.5"
+  # Server text-to-speech for the Chief's car mode (VOICE_TTS_* in .env): Kokoro-82M behind an OpenAI-compatible
+  # /v1/audio/speech. English (US/UK) voices only, no Dutch. Only the router reaches it (no published port).
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:v0.10.0
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 2g
+    cpus: 3
+  queue-worker:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-u", "queue_worker.py"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/${POSTGRES_DB:-agent_platform}
+    depends_on:
+      database:
+        condition: service_healthy
+      agent-router:
+        condition: service_started
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agents}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-agent_platform}
+    volumes:
+      - agent_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    security_opt:
+      - no-new-privileges:true
+  # Nightly pg_dump of the platform database into ./backups (scripts/pg-backup.sh; see README "Backups").
+  backup:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/bin/pg-backup.sh"]
+    command: ["loop"]
+    environment:
+      PGHOST: database
+      PGUSER: ${POSTGRES_USER:-agents}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      PGDATABASE: ${POSTGRES_DB:-agent_platform}
+      BACKUP_DIR: /backups
+      BACKUP_NAME: ${POSTGRES_DB:-agent_platform}
+      BACKUP_TIME: ${BACKUP_TIME:-03:30}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_KEEP_WEEKS: ${BACKUP_KEEP_WEEKS:-8}
+      TZ: ${BACKUP_TZ:-UTC}
+    volumes:
+      - ./scripts/pg-backup.sh:/usr/local/bin/pg-backup.sh:ro
+      - ./backups:/backups
+    tmpfs:
+      - /tmp
+    depends_on:
+      database:
+        condition: service_healthy
+    # Unhealthy while the last attempt failed (details in backups/status.json).
+    healthcheck:
+      test: ["CMD-SHELL", "! grep -q '\"error\": \"' /backups/status.json"]
+      interval: 5m
+      timeout: 10s
+      start_period: 30s
+    # Root in the container, without capabilities: it writes only to ./backups, which Docker creates as root.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  agent_db:
+  agent_attachments:
+  engine_auth:
+networks:
+  hla_tool_net:
+    external: true
+    name: hla-tool-net

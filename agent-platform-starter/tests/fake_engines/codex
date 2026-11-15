@@ -1,0 +1,3 @@
+#!/bin/sh
+# Fake codex CLI for tests and the UI preview (fake_cli.py).
+exec python3 "$(dirname "$0")/fake_cli.py" "$0" "$@"

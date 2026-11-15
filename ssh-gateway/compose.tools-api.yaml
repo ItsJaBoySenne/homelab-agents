@@ -1,0 +1,27 @@
+services:
+  ssh-gateway-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["python", "-m", "gateway_api.server"]
+    entrypoint: []
+    restart: unless-stopped
+    env_file: .env.gateway
+    volumes:
+      - gateway_audit:/data
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    environment:
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    networks: [hla_tool_net]
+networks:
+  hla_tool_net:
+    external: true
+    name: hla-tool-net
