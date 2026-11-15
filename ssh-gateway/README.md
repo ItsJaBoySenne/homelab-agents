@@ -112,6 +112,30 @@ still hold `SSH_HOST` / `SSH_USER`: when present they must equal the inventory. 
 `../ssh-fleet`. VMs the gateway creates on Proxmox are added at runtime (`servers_dynamic`, key in the credential
 store, fingerprint recorded on first contact; see **Proxmox VE** below). `python -m gateway.cli servers` lists them all.
 
+## Configuration and deploy
+
+`.env.gateway` (see `.env.gateway.example`; `../setup.sh` creates it) holds `TOOL_GATEWAY_TOKEN` and
+`POLICY_ADMIN_TOKEN` (the same values as in the agent platform's `.env`), the secret store settings
+(`HLA_SECRETS_BACKEND`, `HLA_SECRETS_KEY`, or the `INFISICAL_*` identity) and the integration settings. The servers and
+services come from `../config/inventory.yaml`, mounted read-only at `/config/inventory.yaml`. The gateway runs as part
+of the one Compose project at the repository root; `./dc` here runs `docker compose` against it (or, with
+`HLA_STANDALONE=1`, against this folder's own `compose.yaml` + `compose.tools-api.yaml`).
+
+```bash
+cd homelab-agents
+docker compose up -d --build ssh-gateway-api     # deploy or update the API
+docker compose logs --tail 50 ssh-gateway-api
+cd ssh-gateway
+python3 tests/test_autonomy.py                   # maintenance scripts against stand-in apt/systemd/docker
+python3 tests/test_policy.py                     # API + policy rules (needs paramiko; SSH is stubbed)
+python3 tests/test_investigate.py                # path/container investigations, run on a local folder
+python3 tests/test_files.py                      # write_file/read_file scripts, run on a local folder
+python3 tests/test_github.py                     # GitHub pull requests: policy, allowlist, levels (GitHub is stubbed)
+```
+
+The gateway CLI (one-off container, profile `tools`): `docker compose --profile tools run --rm ssh-gateway --help`.
+The secret store CLI runs inside the API container (see **Secret store** below).
+
 ## Secret store
 
 `gateway/secret_store.py` is the one interface every module uses for secrets. `HLA_SECRETS_BACKEND` chooses the backend:
@@ -318,7 +342,7 @@ dashboard's **MCP** page; the gateway connects, holds its auth and checks every 
 - **stdio servers** are not run by the gateway. Put one behind a small proxy on a host and register its URL, e.g.
   `npx -y supergateway --stdio "npx -y @modelcontextprotocol/server-filesystem /srv/share" --outputTransport streamableHttp --port 8000`
   (URL `http://<host>:8000/mcp`) or `mcp-proxy --transport streamablehttp --port 8000 -- <server command>`. Protect
-  the proxy (a header token stored as a credential, or a firewall rule that only lets 192.168.10.202 in).
+  the proxy (a header token stored as a credential, or a firewall rule that only lets the gateway's host in).
 - **Auth**: none, a bearer token, or a custom header (`X-API-Key`, …). The value is always a credential name from the
   credential store (`gateway/credentials.py`, entered on the Connections page), read for each request and masked
   (`[credential:NAME]`) in every reply and audit row. Keys in the URL's query string are refused; a URL that itself
@@ -388,11 +412,11 @@ values), the service name and its backend URLs. Labels are filtered the same way
 container environment are dropped). Host names are checked against a host-name pattern and go to the check script on
 stdin, which checks them again and quotes them; `TRAEFIK_API_URL` and `TRAEFIK_DYNAMIC_DIR` are validated and quoted.
 
-**Matching**: a route belongs to the container whose published port (on `192.168.30.11`, `0.0.0.0` or all addresses)
-is the backend's port, when the backend host is `192.168.30.11` or `public-website` (more names: `WEBSITE_BACKEND_HOSTS`,
+**Matching**: a route belongs to the container whose published port (on the website server's address, `0.0.0.0` or all addresses)
+is the backend's port, when the backend host is the website server (inventory `role: website`: its address or name; more names: `WEBSITE_BACKEND_HOSTS`,
 comma-separated), or to the container that declares it in `traefik.http.routers.*` labels. Containers are grouped by
 compose project (or `hla.name`). A route to the VM without such a container is listed as "route without a running
-container"; a container without a route has "no public URL" and shows its LAN URL `http://192.168.30.11:<port>`; routes
+container"; a container without a route has "no public URL" and shows its LAN URL `http://<website-server>:<port>`; routes
 to other machines are only counted (`other_routes`).
 
 **Environment**: the `hla.environment` label (production/staging/test) wins, then the owner's override (stored by the
@@ -464,7 +488,7 @@ writes, renames or deletes any other file there. Hand-written files (`nw-staging
 are only **read** (through the Traefik API) to find conflicts; the dashboard lists them read-only.
 
 **Desired state** lives in the gateway database (`managed_routes`: name, host, environment production|staging, backend
-`http://192.168.30.11:<port>` (only the website VM: its address, `public-website` and `WEBSITE_BACKEND_HOSTS`), optional path
+`http://<website-server>:<port>` (only the website server: its address, its name and `WEBSITE_BACKEND_HOSTS`), optional path
 prefix, protection, basic-auth user and the password's secret name, cert resolver, extra entry points, project, status,
 created/updated by and at). The whole file is rendered from it, deterministically (sorted, no timestamps), with a header
 `# managed by the Homelab Agents platform — do not edit by hand; changes are overwritten`. Every router, service and middleware
@@ -508,7 +532,7 @@ the secret.
 most hand-written routers use (from the API), or `TRAEFIK_CERT_RESOLVER`. HTTP is redirected to HTTPS by the `web` entry point.
 
 **DNS check**: the gateway resolves the name (A and AAAA) and compares it with `PUBLIC_IPS` (default `203.0.113.10`): `ok`;
-`lan` (resolves to Traefik's LAN address `192.168.30.103` through a local override; public DNS is not visible from here);
+`lan` (resolves to the Traefik host's LAN address through a local override; public DNS is not visible from here);
 `elsewhere`; `missing`; each with the exact record to add, e.g. `shop-staging A 203.0.113.10 (in the DNS zone of
 example.com)`. Saving with missing DNS is allowed and warned: the certificate cannot be issued until the record exists.
 
@@ -733,5 +757,5 @@ are told to read them from the controller's API documentation and with `get` bef
 - Keep verified backups of the VMs, particularly Traefik, database and file servers.
 - `agents-vm` and `secrets-vm` are deliberately not in the server list, and agents cannot power or roll them back on Proxmox.
 - The host key of a VM the gateway created is trusted on first contact; check it on the VM console (Infrastructure view).
-- Restrict SSH to 192.168.10.202 at the firewall; the `from=` restriction on the key is not a firewall.
+- Restrict SSH to the gateway's host at the firewall; the `from=` restriction on the key is not a firewall.
 - Approvals are not identity-bound: anyone with Docker access on this VM can grant them.

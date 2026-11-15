@@ -66,7 +66,8 @@ M4A = b'\x00\x00\x00\x20ftypM4A ' + b'\x00' * 40
 
 # Off by default.
 r = c.get('/ui/api/voice/config', headers=R)
-check(r.status_code == 200 and r.json() == {'server_stt': False, 'server_tts': False, 'tts_voices': [], 'stt_language': 'nl'},
+check(r.status_code == 200 and r.json() == {'server_stt': False, 'server_tts': False, 'tts_voices': [], 'stt_language': 'en',
+                                         'language': 'en-US'},
       f'config: everything off by default {r.json()}')
 check(c.post('/ui/api/voice/transcribe', headers=W, content=WEBM).status_code == 404, 'transcribe off -> 404')
 check(c.post('/ui/api/voice/speak', headers=W, json={'text': 'hallo'}).status_code == 404, 'speak off -> 404')
@@ -80,7 +81,7 @@ check(c.post('/ui/api/voice/speak', headers=R, json={'text': 'x'}).status_code =
 os.environ.update({'VOICE_STT_BASE_URL': 'http://whisper.local:8000/v1/', 'VOICE_STT_API_KEY': KEY, 'VOICE_STT_MODEL': 'Systran/faster-whisper-small',
                    'VOICE_TTS_BASE_URL': 'https://tts.example/v1', 'VOICE_TTS_API_KEY': KEY, 'VOICE_TTS_VOICES': 'alloy, nova'})
 r = c.get('/ui/api/voice/config', headers=R)
-check(r.json() == {'server_stt': True, 'server_tts': True, 'tts_voices': ['alloy', 'nova'], 'stt_language': 'nl'}, f'config on {r.json()}')
+check(r.json() == {'server_stt': True, 'server_tts': True, 'tts_voices': ['alloy', 'nova'], 'stt_language': 'en', 'language': 'en-US'}, f'config on {r.json()}')
 check(KEY not in r.text and 'whisper.local' not in r.text, 'config shows neither key nor URL')
 
 # Sniffing and limits.
@@ -110,7 +111,16 @@ check('Systran/faster-whisper-small' in body and 'name="language"\r\n\r\nen' in 
       and 'audio/mp4' in body, 'model, language from the browser, file name and type from the sniffed content')
 SEEN.clear()
 c.post('/ui/api/voice/transcribe', headers=W, content=WEBM)
-check('name="language"\r\n\r\nnl' in SEEN[0].content.decode('latin-1'), 'default language nl')
+check('name="language"\r\n\r\nen' in SEEN[0].content.decode('latin-1'), 'default language en (from HLA_VOICE_LANGUAGE=en-US)')
+os.environ['HLA_VOICE_LANGUAGE'] = 'nl-BE'
+SEEN.clear()
+c.post('/ui/api/voice/transcribe', headers=W, content=WEBM)
+r = c.get('/ui/api/voice/config', headers=R)
+check('name="language"\r\n\r\nnl' in SEEN[0].content.decode('latin-1') and r.json()['language'] == 'nl-BE' and r.json()['stt_language'] == 'nl',
+      'HLA_VOICE_LANGUAGE=nl-BE: car mode defaults to Dutch, server transcription too')
+os.environ['HLA_VOICE_LANGUAGE'] = 'en-US; drop'
+check(voice.default_language() == 'en-US', 'a malformed HLA_VOICE_LANGUAGE falls back to en-US')
+del os.environ['HLA_VOICE_LANGUAGE']
 
 # Speak.
 SEEN.clear()

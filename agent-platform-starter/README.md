@@ -1,7 +1,9 @@
-# Homelab Agents
+# Homelab Agents: agent router and dashboard
 
-Self-hosted agent router and dashboard, typically served at e.g. `https://agents.example.com/ui/` through a reverse
-proxy with single sign-on (Traefik and Authelia in these docs). Examples assume the platform VM is `192.168.1.10`.
+The agent router (FastAPI), the dashboard, the queue worker, Postgres with nightly backups and the optional Kokoro voice
+service. **To install, use `../setup.sh`** (see the [top-level README](../README.md)); this page documents how the
+router works inside. Examples use `192.168.1.10` for the machine running it and `https://agents.example.com/ui/` for
+an optional reverse proxy address; replace them with your own.
 
 ## How a request runs
 
@@ -88,7 +90,7 @@ and are logged in `task_approval_events`. Conversation runs can be stopped, and 
 | `engines.py`, `engine_mcp_relay.py`, `subscriptions.py` | Subscription engines: the Claude Code / Codex CLIs as providers, the tool relay (MCP server the CLI starts), sign-in and the Subscriptions page API (`/ui/api/subscriptions`) |
 | `chief.py` | The Chief (`/ui/api/chief`): one agent and conversation with the platform_* tools (state, changes, projects, runs, conversations, logs; confirmed actions), voice reply style |
 | `runs.py` | Registry of background runs (single process) for Stop |
-| `sandbox.py` | Sandbox reset through the pve2 Proxmox API |
+| `sandbox.py` | Sandbox reset (rollback to its `clean` snapshot) through the Proxmox API of the sandbox's node |
 | `agent_tool/` | Tool loop and tool definitions for the SSH agent |
 | `streaming/`, `memory/`, `brain/`, `tool_context/` | SSE, memory capture, knowledge tools and secret writer, Proxmox context |
 | `queue_worker.py` | Runs queued jobs one at a time through the API |
@@ -397,7 +399,7 @@ for one tap in the car. The screen stays on while it is open (Wake Lock).
 - **∞ Hands-free**: listen → send after a pause → speak the reply → listen again, until a minute without speech.
 - **☰ Briefing**: asks what changed since your last visit, what needs you and what is running.
 - **■ Stop** silences him and stops listening. **✕** leaves car mode.
-- **⚙ Settings**: the Chief's model, language (Nederlands (België) by default, remembered per device), how to listen
+- **⚙ Settings**: the Chief's model, language (English (US) by default, `HLA_VOICE_LANGUAGE`; remembered per device), how to listen
   and speak (this browser, or the server's speech service), voice and speed.
 - Every turn is a normal message in the Chief's conversation (`/ui/api/chief`, sent with `voice: true`), so it is also
   in **Conversations** with its costs. The reply is spoken sentence by sentence while it streams in; Markdown, code and
@@ -431,10 +433,12 @@ went: risk review, knowledge, snapshot, prompt, each model round with its first 
 25 MB); `POST /ui/api/voice/speak` returns MP3.
 
 **Kokoro TTS (in compose.yaml):** the `kokoro` service (Kokoro-82M via Kokoro-FastAPI, CPU, no published port, 2 CPUs /
-2 GB) speaks the Chief's replies with US/UK English voices; it has no Dutch, so set car mode's language to English and
-its speak engine to **Server** (⚙). `.env`: `VOICE_TTS_BASE_URL=http://kokoro:8880/v1`, `VOICE_TTS_MODEL=kokoro`,
+2 GB) speaks the Chief's replies with US/UK English voices (no Dutch: keep car mode on English when you use it) once
+its speak engine is set to **Server** (⚙). It runs only with the compose profile `voice` (`../setup.sh --voice` sets
+`COMPOSE_PROFILES=voice` in `../.env`). `.env`: `VOICE_TTS_BASE_URL=http://kokoro:8880/v1`, `VOICE_TTS_MODEL=kokoro`,
 `VOICE_TTS_VOICE=af_heart`, `VOICE_TTS_VOICES=af_heart,af_bella,af_nicole,am_michael,am_adam` (more: `bf_*`/`bm_*`
-British). Start it with `sudo ./dc up -d kokoro`; the first request after a start loads the model (a few seconds).
+British). Start it with `docker compose --profile voice up -d`; the first request after a start loads the model (a few
+seconds).
 
 Another self-hosted option on this VM, for speech recognition as well (CPU is enough for the small model):
 
@@ -454,21 +458,26 @@ same for TTS with `tts-1`.
 
 ## Configure and deploy
 
-Settings live in `.env` (`.env.example` lists all of them). The CA files (`proxmox-ca.pem` for the main
-Proxmox host, `<node>-ca.pem` for the sandbox's Proxmox node) sit next to it and are not in git. Servers and
-integrations come from `../config/inventory.yaml` (mounted read-only at `/config/inventory.yaml`). The gateway's
-`./dc` copies the Proxmox CA files into `../ssh-gateway/certs/` for its own TLS checks.
+Settings live in `.env` (`.env.example` lists all of them; `../setup.sh` creates it and generates the secrets). Optional
+CA files (`proxmox-ca.pem` for the main Proxmox host, `<node>-ca.pem` for the sandbox's Proxmox node) sit next to it and
+are not in git; the gateway's `./dc` copies the Proxmox CA files into `../ssh-gateway/certs/` for its own TLS checks.
+Servers and integrations come from `../config/inventory.yaml` (mounted read-only at `/config/inventory.yaml`, read at
+startup: restart after editing it). The whole stack runs as one Compose project from the repository root
+(`../compose.yaml`, see [docs/configuration.md](../docs/configuration.md#compose-layout)); `./dc` here runs
+`docker compose` against it.
 
 ```bash
-cd homelab-agents/agent-platform-starter
-sudo ./dc up -d --build --force-recreate agent-router     # deploy the current code
-curl -s http://192.168.1.10:8088/health                      # {"status":"ok","database":"connected"}
-sudo ./dc logs --tail 60 agent-router                       # if it does not come up
+cd homelab-agents
+docker compose up -d --build                          # deploy the current code
+curl -s http://127.0.0.1:8088/health                  # {"status":"ok","database":"connected"}
+docker compose logs --tail 60 agent-router            # if it does not come up
 ```
 
-Schema changes are applied on startup and only add tables, columns and indexes. New volumes in `compose.yaml` (e.g. `agent_attachments`) are
-created by `up`; the image creates `/data/attachments` owned by the app user, so a new volume starts writable. Port 8088 listens on `HLA_LISTEN_ADDRESS` (default
-127.0.0.1; set your LAN IP when the proxy runs elsewhere); access goes through Traefik/Authelia, and approver identity headers are trusted only from Traefik's IP.
+Schema changes are applied on startup and only add tables, columns and indexes. New volumes in `compose.yaml` (e.g.
+`agent_attachments`) are created by `up`; the image creates `/data/attachments` owned by the app user, so a new volume
+starts writable. Port 8088 listens on `HLA_LISTEN_ADDRESS` (default 127.0.0.1; a LAN IP when a reverse proxy runs
+elsewhere). Approver identity headers from an SSO proxy are trusted only from `HLA_TRUSTED_PROXY_IPS`
+([docs/security.md](../docs/security.md#https-and-single-sign-on)).
 
 ## Backups
 

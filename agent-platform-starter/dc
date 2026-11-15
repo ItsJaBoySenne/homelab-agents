@@ -1,4 +1,11 @@
 #!/bin/sh
-# docker compose for this project from any directory: sudo ./dc ps -a
+# docker compose for this part of the stack, from any directory: sudo ./dc ps -a
+# Installed with ../setup.sh (one project, ../compose.yaml)? Then this runs there, so ./dc and the scripts in
+# scripts/ work the same either way (the service names are identical). HLA_STANDALONE=1 forces this folder's own
+# compose.yaml (split installs, see ../docs/configuration.md).
 cd "$(dirname "$0")" || exit 1
+if [ "${HLA_STANDALONE:-0}" != 1 ] && [ -f ../compose.yaml ] \
+   && { [ -f ../.env ] || [ -n "$(docker compose -p homelab-agents ps -aq 2>/dev/null)" ]; }; then
+  cd .. || exit 1
+fi
 exec docker compose "$@"

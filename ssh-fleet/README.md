@@ -4,14 +4,34 @@ Prepares a Linux VM for `../ssh-gateway`: a locked `svc-hla-agent` account with 
 works from the gateway VM's address. After installing, add the server to `config/inventory.yaml` and store the key and the host fingerprint in the
 gateway's secret store (`servers/<name>/...`, section 4).
 
+## Quick path
+
+`../setup.sh` does most of this for you: for every server in `config/inventory.yaml` it generates a key with
+`01-generate-keys.sh`, imports the private key into the gateway's secret store and prints a one-liner per server that
+copies `02-install-on-server.sh` there and runs it with the public key inline:
+
+```bash
+scp ssh-fleet/02-install-on-server.sh admin@192.168.1.21:/tmp/hla-install.sh && \
+  ssh -t admin@192.168.1.21 "sudo bash /tmp/hla-install.sh 'ssh-ed25519 AAAA... hla-gateway-server1' 192.168.1.10 --user svc-hla-agent; rm -f /tmp/hla-install.sh"
+```
+
+Then pin the server's host key (setup prints this command for every server that still needs it) and compare the
+fingerprint it shows with the one the installer printed:
+
+```bash
+docker compose exec ssh-gateway-api python -m gateway.cli secrets pin-host-key server1
+```
+
+The rest of this page is the manual route and the background.
+
 ## Safety before deployment
 
 - Snapshot/backup each VM and validate restores; do one VM at a time.
-- The `--admin` option is equivalent to granting root to anyone holding that VM's private key. Use on **disposable dev VM first**. For Traefik, DB, file server, Infisical, and agent VM, provision non-admin access initially. Consider keeping Infisical and the agent host **outside autonomous agent control** entirely.
+- The `--admin` option is equivalent to granting root to anyone holding that VM's private key. Use on **disposable dev VM first**. For the reverse proxy, database, file server, your secret store and the agent host, provision non-admin access initially. Consider keeping your secret store and the agent host **outside autonomous agent control** entirely.
 - Keep target VM's existing admin login working. Restrict SSH network access on the firewall to the gateway VM's IP when compatible with your normal admin access and monitoring.
-- Key material must not be sent to AI models, logs, Git, chat, shared files, or the remote VMs. Infisical should have a separate narrow read-only machine identity for gateway retrieval; don't put Infisical bootstrap credentials in prompts.
+- Key material must not be sent to AI models, logs, Git, chat, shared files, or the remote VMs. With the Infisical backend, give the gateway a separate narrow read-only machine identity; never put secret-store credentials in prompts.
 - Public keys are constrained to the gateway VM's source IP using authorized_keys `from=`, and forwarding is disabled. This constrains *key use*, not privileged root actions. Verify that source IP reflects the IP SSH servers actually see (NAT can change it).
-- Each target receives a distinct Ed25519 key. Generated keys have **no passphrase for noninteractive operation**. Infisical protects stored keys. If gateway identity is compromised, attackers may still retrieve every key it can read; scope identities tightly.
+- Each target receives a distinct Ed25519 key. Generated keys have **no passphrase for noninteractive operation**. The gateway's secret store keeps them encrypted at rest. If the gateway is compromised, attackers may still retrieve every key it can read; keep it tightly scoped.
 
 The examples below use `192.168.1.10` for the VM that runs the agent platform and SSH gateway, and `server1`
 (`192.168.1.21`) for a server you want the agents to reach. Replace them with your own names and addresses.
@@ -39,6 +59,8 @@ SSH in using your existing admin account and run (the second argument is the age
 
 ```bash
 sudo bash /tmp/02-install-on-server.sh /tmp/hla-agent.pub 192.168.1.10
+# or with the key inline and another account name (must match "user" in config/inventory.yaml):
+# sudo bash /tmp/02-install-on-server.sh 'ssh-ed25519 AAAA... hla-gateway-server1' 192.168.1.10 --user svc-hla-agent
 # ONLY on disposable dev VM AFTER backup and explicit risk review:
 # sudo bash /tmp/02-install-on-server.sh /tmp/hla-agent.pub 192.168.1.10 --admin
 sudo rm -f /tmp/hla-agent.pub /tmp/02-install-on-server.sh
@@ -54,7 +76,7 @@ Repeat with the correct key and address for every server. Suggested starting rol
 | reverse proxy, network controller, database, file server | no sudo initially |
 | disposable dev / test VM | `--admin` only here |
 | the agents VM itself | **prefer not managed by its own agents** |
-| your secret store (Infisical) | **prefer not managed by agents** |
+| your secret store (e.g. Infisical, if you use it) | **prefer not managed by agents** |
 
 If your admin account has a different name, substitute it. For servers not reachable over SSH, copy installer/public key using a Proxmox console or your existing access route. Don't change SSH daemon config automatically.
 

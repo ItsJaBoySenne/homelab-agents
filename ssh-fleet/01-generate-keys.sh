@@ -21,4 +21,4 @@ for name in "${SERVERS[@]}"; do
 done
 printf '\nPrivate keys: %s (DO NOT copy to target VMs or Git)\n' "$BASE"
 printf 'Public keys:  %s/<name>.pub\n' "$BASE"
-printf 'Store each private key in the gateway: python -m gateway.cli secrets import-ssh-key <name> /dev/stdin < <key>.\n'
+printf 'Store each private key in the gateway (./setup.sh does this for you):\n  docker compose exec -T ssh-gateway-api python -m gateway.cli secrets import-ssh-key <name> /dev/stdin < %s/<name>\n' "$BASE"

@@ -1,11 +1,8 @@
 # Proxmox CA certificates
 
-The gateway checks the TLS certificate of each Proxmox node against that node's own CA (`gateway/proxmox.py`):
-
-| File | Node | Checked name |
-|---|---|---|
-| `proxmox-ca.pem` | node 1 `proxmox` (192.168.20.30) | `proxmox.home.arpa` |
-| `pve2-ca.pem` | node 2 `pve2` (192.168.20.31) | `pve2.example.com` |
+The gateway checks the TLS certificate of each Proxmox node against that node's own CA (`gateway/proxmox.py`): one
+file per node in `config/inventory.yaml` (`services.proxmox.nodes`), named `<node>-ca.pem`, e.g. `pve-ca.pem` for node
+`pve`. The name checked is the node's `tls_name`, else the host name of its URL.
 
 They are the nodes' `/etc/pve/pve-root-ca.pem` (public certificates, no keys). `./dc` copies them here from
 `../agent-platform-starter/` when they are missing; `*.pem` files are not committed. The image copies this folder to

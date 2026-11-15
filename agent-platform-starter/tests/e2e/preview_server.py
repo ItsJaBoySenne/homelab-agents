@@ -536,9 +536,11 @@ async def handler(request):
                                                           'finish_reason': 'tool_calls'}], 'usage': usage})
         # HLA_VOICE_V1: a short spoken-style answer for the car mode's questions.
         latest = _text(body['messages'][-1]['content']).split('LATEST USER MESSAGE:')[-1].lower()
-        if body.get('stream') and ('hoe staat het' in latest or 'briefing' in latest):
+        if body.get('stream') and ('hoe staat het' in latest or 'how are the projects' in latest or 'briefing' in latest):
             spoken = ('Alles draait. Twee projecten lopen, en één ding wacht op jou: de DHCP-reservatie voor de monitoring-VM. '
-                      'Open Needs you om het goed te keuren.')
+                      'Open Needs you om het goed te keuren.') if ('hoe staat het' in latest or 'geef me' in latest) else (
+                      'Everything is running. Two projects are going, and one thing waits for you: the DHCP reservation for the '
+                      'monitoring VM. Open Needs you to approve it.')
             async def sse_voice():
                 for i in range(0, len(spoken), 30):
                     await asyncio.sleep(delay / 8)

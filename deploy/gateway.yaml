@@ -1,0 +1,14 @@
+# Additions to ssh-gateway/compose*.yaml for the single-project install (../compose.yaml).
+# The secret store volume and the inventory mount are already in the component files.
+services:
+  ssh-gateway-api:
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8099), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+networks:
+  hla_tool_net:
+    external: false
+    name: hla-tool-net

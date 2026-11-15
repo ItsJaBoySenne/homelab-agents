@@ -1,0 +1,18 @@
+# Additions to agent-platform-starter/compose.yaml for the single-project install (../compose.yaml).
+# The inventory mount (read-only, /config/inventory.yaml) is already in the component file.
+services:
+  agent-router:
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 40s
+  # Optional text-to-speech: only with `--profile voice` (or COMPOSE_PROFILES=voice in ../.env).
+  kokoro:
+    profiles: ["voice"]
+networks:
+  # Shared with the gateway; created by this project (the folder compose files expect it to exist already).
+  hla_tool_net:
+    external: false
+    name: hla-tool-net

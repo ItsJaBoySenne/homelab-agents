@@ -4,15 +4,17 @@ The car mode in the dashboard speaks and listens with the browser by default (We
 endpoints are the alternative for browsers without speech recognition (or when the user picks "Server"): any
 OpenAI-compatible speech service, e.g. a self-hosted faster-whisper/speaches container or OpenAI itself.
 
-  GET  /ui/api/voice/config      what is configured: {"server_stt", "server_tts", "tts_voices", "stt_language"}
+  GET  /ui/api/voice/config      what is configured: {"server_stt", "server_tts", "tts_voices", "stt_language", "language"}
   POST /ui/api/voice/transcribe  raw audio body (webm/ogg/mp4/wav/mp3, sniffed by content, max 25 MB) -> {"text"}
   POST /ui/api/voice/speak       {"text"} (max 4000 characters) -> audio/mpeg
 
 Settings (router .env; the keys never reach the browser and never appear in an error):
+  HLA_VOICE_LANGUAGE  car mode's default language (BCP 47, e.g. en-US, en-GB, nl-BE, nl-NL; default en-US); each
+                      browser can still pick another one in car mode's settings
   VOICE_STT_BASE_URL  e.g. http://whisper:8000/v1 or https://api.openai.com/v1   (unset: server STT off)
   VOICE_STT_API_KEY   bearer key, optional for a self-hosted service
   VOICE_STT_MODEL     default whisper-1 (Systran/faster-whisper-small for speaches)
-  VOICE_STT_LANGUAGE  default nl
+  VOICE_STT_LANGUAGE  default: the language part of HLA_VOICE_LANGUAGE (en)
   VOICE_TTS_BASE_URL  e.g. http://speaches:8000/v1 or https://api.openai.com/v1   (unset: server TTS off)
   VOICE_TTS_API_KEY, VOICE_TTS_MODEL (default tts-1), VOICE_TTS_VOICE (default alloy),
   VOICE_TTS_VOICES    comma-separated voices offered in the car mode picker (default: VOICE_TTS_VOICE)
@@ -100,6 +102,16 @@ class SpeakBody(BaseModel):
     voice: str | None = Field(default=None, max_length=64)
 
 
+def default_language() -> str:
+    """Car mode's default language (HLA_VOICE_LANGUAGE), a BCP 47 tag such as en-US or nl-BE."""
+    lang = _env('HLA_VOICE_LANGUAGE', 'en-US')
+    return lang if all(p.isalnum() for p in lang.split('-')) and len(lang) <= 16 else 'en-US'
+
+
+def stt_language() -> str:
+    return _env('VOICE_STT_LANGUAGE', default_language().split('-')[0].lower())
+
+
 def build_router(dashboard_read, dashboard_write):
     router = APIRouter(prefix='/ui/api/voice', tags=['voice'])
 
@@ -107,7 +119,8 @@ def build_router(dashboard_read, dashboard_write):
     def config(request: Request):
         dashboard_read(request)
         return {'server_stt': stt_enabled(), 'server_tts': tts_enabled(),
-                'tts_voices': tts_voices() if tts_enabled() else [], 'stt_language': _env('VOICE_STT_LANGUAGE', 'nl')}
+                'tts_voices': tts_voices() if tts_enabled() else [], 'stt_language': stt_language(),
+                'language': default_language()}
 
     @router.post('/transcribe')
     async def transcribe(request: Request, language: str | None = None):
@@ -130,7 +143,7 @@ def build_router(dashboard_read, dashboard_write):
         if not kind:
             raise HTTPException(415, 'Not a recording this accepts (webm, ogg, mp4/m4a, wav or mp3)')
         mime, filename = kind
-        lang = (language or _env('VOICE_STT_LANGUAGE', 'nl')).split('-')[0].lower()[:5]
+        lang = (language or stt_language()).split('-')[0].lower()[:5]
         form = {'model': _env('VOICE_STT_MODEL', 'whisper-1'), 'response_format': 'json'}
         if lang.isalpha():
             form['language'] = lang

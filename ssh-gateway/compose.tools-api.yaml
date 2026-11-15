@@ -11,7 +11,12 @@ services:
       - gateway_audit:/data
       # HLA_SECRET_STORE_V1: the local secret store (secrets.enc), and the inventory (read-only).
       - gateway_secrets:/data/secrets
-      - ../config/inventory.yaml:/config/inventory.yaml:ro
+      - type: bind          # long form: a missing file is an error, never an empty folder Docker creates in its place
+        source: ../config/inventory.yaml
+        target: /config/inventory.yaml
+        read_only: true
+        bind:
+          create_host_path: false
       - /etc/ssl/certs:/etc/ssl/certs:ro
     environment:
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt

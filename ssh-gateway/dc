@@ -1,9 +1,16 @@
 #!/bin/sh
 # docker compose for the gateway API with its base file, so commands stay short: sudo ./dc ps -a
+# Installed with ../setup.sh (one project, ../compose.yaml)? Then this runs there (same service names).
+# HLA_STANDALONE=1 forces this folder's own compose files (split installs, see ../docs/configuration.md).
 cd "$(dirname "$0")" || exit 1
 # The Proxmox CA certificates the gateway checks the nodes against (public certs; *.pem stays out of git).
 for p in ../agent-platform-starter/*-ca.pem; do
   f=$(basename "$p")
   [ -f "certs/$f" ] || [ ! -f "$p" ] || cp "$p" "certs/$f"
 done
+if [ "${HLA_STANDALONE:-0}" != 1 ] && [ -f ../compose.yaml ] \
+   && { [ -f ../.env ] || [ -n "$(docker compose -p homelab-agents ps -aq 2>/dev/null)" ]; }; then
+  cd .. || exit 1
+  exec docker compose "$@"
+fi
 exec docker compose -f compose.yaml -f compose.tools-api.yaml "$@"

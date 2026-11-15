@@ -14,7 +14,12 @@ services:
       AGENT_SECRET_WRITER_ENABLED: ${AGENT_SECRET_WRITER_ENABLED:-false}
     volumes:
       # HLA_INVENTORY_V1: the server inventory (servers, integrations), read-only; see ../config/inventory.example.yaml.
-      - ../config/inventory.yaml:/config/inventory.yaml:ro
+      - type: bind          # long form: a missing file is an error, never an empty folder Docker creates in its place
+        source: ../config/inventory.yaml
+        target: /config/inventory.yaml
+        read_only: true
+        bind:
+          create_host_path: false
       # HLA_ATTACHMENTS_V1: photos, files and documents of conversations, projects and tasks (attachments.py).
       - agent_attachments:/data/attachments
       # HLA_ENGINES_V1: Claude Code / Codex sign-ins (written only by the CLIs) and their per-run directories.
@@ -60,7 +65,12 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/${POSTGRES_DB:-agent_platform}
     volumes:
-      - ../config/inventory.yaml:/config/inventory.yaml:ro
+      - type: bind          # long form: a missing file is an error, never an empty folder Docker creates in its place
+        source: ../config/inventory.yaml
+        target: /config/inventory.yaml
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       database:
         condition: service_healthy
