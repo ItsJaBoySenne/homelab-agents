@@ -400,22 +400,25 @@ async def _watch_login(engine, login):
     loop = asyncio.get_running_loop()
     deadline = time.monotonic() + LOGIN_TIMEOUT
     eof = asyncio.Event()
+    # The watcher keeps its own fd: a new sign-in resets login.master to None, and a reader still registered on the old
+    # fd then raised TypeError on every loop tick (a busy loop). Reader and fd are always released through `fd`.
+    fd = login.master
     try:
-        if login.master is not None:
+        if fd is not None:
             def readable():
                 try:
-                    data = os.read(login.master, 65536)
+                    data = os.read(fd, 65536)
                 except BlockingIOError:
                     return
                 except OSError:
                     data = b''
                 if not data:
-                    loop.remove_reader(login.master)
+                    loop.remove_reader(fd)
                     eof.set()
                     return
                 login.buffer = (login.buffer + data.decode('utf-8', 'replace'))[-200_000:]
                 _parse_login(engine, login)
-            loop.add_reader(login.master, readable)
+            loop.add_reader(fd, readable)
         else:
             async def pump():
                 while True:
@@ -449,12 +452,13 @@ async def _watch_login(engine, login):
         await _reap(login.proc)
         raise
     finally:
-        if login.master is not None:
+        if fd is not None:
             with contextlib.suppress(Exception):
-                loop.remove_reader(login.master)
+                loop.remove_reader(fd)
             with contextlib.suppress(OSError):
-                os.close(login.master)
-            login.master = None
+                os.close(fd)
+            if login.master == fd:
+                login.master = None
         login.buffer = ''   # nothing of the sign-in output is kept
 
 
