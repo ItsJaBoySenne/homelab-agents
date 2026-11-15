@@ -1,5 +1,5 @@
-# Gateway, backend and browser tests on every push and pull request to main.
-# No secrets: the suites mock OpenRouter, TypeSafe, Infisical and SSH themselves.
+# Setup script, compose files, gateway, backend and browser tests on every push and pull request to main.
+# No secrets: the suites mock OpenRouter, TypeSafe, Infisical and SSH themselves; setup runs without a Docker daemon.
 name: tests
 
 on:
@@ -22,6 +22,63 @@ env:
   PLAYWRIGHT_VERSION: "1.48.2"
 
 jobs:
+  setup:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Shell syntax
+        run: |
+          bash -n setup.sh
+          for f in ssh-fleet/*.sh agent-platform-starter/scripts/*.sh; do bash -n "$f"; done
+          sh -n agent-platform-starter/dc && sh -n ssh-gateway/dc
+      - name: shellcheck
+        run: |
+          command -v shellcheck >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck; }
+          shellcheck --version | head -2
+          shellcheck setup.sh ssh-fleet/*.sh
+          shellcheck -s sh agent-platform-starter/dc ssh-gateway/dc
+      - name: Compose files validate with the example settings
+        run: |
+          cp agent-platform-starter/.env.example agent-platform-starter/.env
+          cp ssh-gateway/.env.gateway.example ssh-gateway/.env.gateway
+          mkdir -p config
+          if [ -f config/inventory.example.yaml ]; then cp config/inventory.example.yaml config/inventory.yaml; else printf 'servers: []\n' > config/inventory.yaml; fi
+          docker compose version
+          docker compose config -q
+          docker compose --profile voice --profile tools config --services
+          (cd agent-platform-starter && docker compose config -q)
+          (cd ssh-gateway && docker compose -f compose.yaml -f compose.tools-api.yaml config -q)
+          rm -f agent-platform-starter/.env ssh-gateway/.env.gateway config/inventory.yaml
+      - name: setup.sh --yes writes a valid configuration, and is idempotent
+        env:
+          OPENROUTER_API_KEY: sk-or-ci-not-a-real-key
+          FLEET_KEYS: ${{ runner.temp }}/hla-fleet
+        run: |
+          ./setup.sh --yes --no-start --provider openrouter --voice --server web1=192.0.2.10 --server nas=admin@192.0.2.11:2222 | tee setup.log
+          grep -q 'Password:' setup.log
+          ./setup.sh --check
+          docker compose config -q
+          docker compose config --services | grep -qx kokoro
+          sums=$(sha256sum agent-platform-starter/.env ssh-gateway/.env.gateway config/inventory.yaml .env)
+          ./setup.sh --yes --no-start --server web1=192.0.2.10 > rerun.log
+          [ "$sums" = "$(sha256sum agent-platform-starter/.env ssh-gateway/.env.gateway config/inventory.yaml .env)" ]
+          if ls agent-platform-starter/.env.backup-* 2>/dev/null; then echo "an unchanged re-run made a backup"; exit 1; fi
+          # No secret value from the generated files may appear in the output (the dashboard password once, by design).
+          for k in POSTGRES_PASSWORD AGENT_PLATFORM_TOKEN TOOL_GATEWAY_TOKEN POLICY_ADMIN_TOKEN; do
+            v=$(grep "^$k=" agent-platform-starter/.env | cut -d= -f2-)
+            if grep -qF "$v" setup.log rerun.log; then echo "$k leaked into the output"; exit 1; fi
+          done
+          v=$(grep '^HLA_SECRETS_KEY=' ssh-gateway/.env.gateway | cut -d= -f2-)
+          if grep -qF "$v" setup.log rerun.log; then echo "HLA_SECRETS_KEY leaked into the output"; exit 1; fi
+          if grep -qF sk-or-ci-not-a-real-key setup.log rerun.log; then echo "the API key leaked into the output"; exit 1; fi
+      - name: setup.sh stops cleanly without Docker
+        run: |
+          mkdir -p "$RUNNER_TEMP/nodocker"
+          for b in bash sh awk grep sed cat tr cut date mktemp dirname openssl python3 id; do ln -sf "$(command -v $b)" "$RUNNER_TEMP/nodocker/$b"; done
+          if PATH="$RUNNER_TEMP/nodocker" ./setup.sh --yes > nodocker.log 2>&1; then echo "should have failed"; exit 1; fi
+          grep -q 'Docker is not installed' nodocker.log
+
   gateway:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -75,8 +132,10 @@ jobs:
           cache-dependency-path: agent-platform-starter/requirements.txt
       - run: pip install -r requirements.txt 'paramiko>=3.5,<5'
       - run: python tests/test_thread_approval.py
+      - run: python tests/test_attachments.py
       - run: python tests/test_audit_recheck.py
       - run: python tests/test_providers.py
+      - run: python tests/test_voice.py
       - run: python tests/test_engines.py
 
   e2e:

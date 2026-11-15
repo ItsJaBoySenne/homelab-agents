@@ -1,17 +1,35 @@
 #!/usr/bin/env bash
-# Execute locally with sudo: sudo bash 02-install-on-server.sh <public-key-file> <gateway-ip> [--admin]
-# <gateway-ip>: the address this server sees SSH connections from (the VM running the SSH gateway).
+# Run on the target server with sudo/root:
+#   sudo bash 02-install-on-server.sh <public-key-file | 'ssh-ed25519 AAAA... comment'> <gateway-ip> [--user NAME] [--admin]
+# <gateway-ip>: the address this server sees SSH connections from (the machine running the SSH gateway).
+# --user: the account the gateway logs in as (default svc-hla-agent; must match "user" in config/inventory.yaml).
+# ./setup.sh prints a ready-made one-liner (public key inline) for every server in the inventory.
 set -Eeuo pipefail
 if [[ "$(id -u)" -ne 0 ]]; then echo "Run with sudo/root" >&2; exit 1; fi
-if [[ $# -lt 2 || $# -gt 3 ]]; then echo "Usage: sudo bash $0 /tmp/<server>.pub <gateway-ip> [--admin]" >&2; exit 1; fi
-PUB="$1"; SOURCE_IP="$2"; MODE="${3:-}"
+usage() { echo "Usage: sudo bash $0 <public-key-file | 'ssh-ed25519 AAAA...'> <gateway-ip> [--user NAME] [--admin]" >&2; exit 1; }
+[[ $# -ge 2 ]] || usage
+PUB="$1"; SOURCE_IP="$2"; shift 2
+MODE=''; USER_NAME=svc-hla-agent
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --admin) MODE='--admin' ;;
+    --user) USER_NAME="${2:-}"; shift ;;
+    *) usage ;;
+  esac
+  shift
+done
 if [[ ! "$SOURCE_IP" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then echo 'gateway-ip must be an IPv4 address, e.g. 192.168.1.10' >&2; exit 1; fi
-if [[ -n "$MODE" && "$MODE" != '--admin' ]]; then echo 'Only optional flag: --admin' >&2; exit 1; fi
-[[ -f "$PUB" && ! -L "$PUB" ]] || { echo 'Public key file not found or symlink' >&2; exit 1; }
-read -r typ key comment < "$PUB"
+if [[ ! "$USER_NAME" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then echo 'user must be a valid Linux user name' >&2; exit 1; fi
+if [[ "$PUB" == ssh-* ]]; then
+  # Key given inline (one line, as setup.sh prints it).
+  if [[ "$PUB" == *$'\n'* ]]; then echo 'Provide exactly one public key' >&2; exit 1; fi
+  read -r typ key _ <<< "$PUB"
+else
+  [[ -f "$PUB" && ! -L "$PUB" ]] || { echo 'Public key file not found or symlink' >&2; exit 1; }
+  if [[ $(wc -l < "$PUB") -ne 1 ]]; then echo 'Provide exactly one public key' >&2; exit 1; fi
+  read -r typ key _ < "$PUB"
+fi
 if [[ "$typ" != 'ssh-ed25519' || ! "$key" =~ ^[A-Za-z0-9+/=]+$ ]]; then echo 'Expected a single Ed25519 SSH public key' >&2; exit 1; fi
-if [[ $(wc -l < "$PUB") -ne 1 ]]; then echo 'Provide exactly one public key' >&2; exit 1; fi
-USER_NAME=svc-hla-agent
 if ! id "$USER_NAME" >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash --user-group "$USER_NAME"
   passwd -l "$USER_NAME" >/dev/null
@@ -25,7 +43,7 @@ AUTHORIZED="$HOME_DIR/.ssh/authorized_keys"
 touch "$AUTHORIZED"
 chmod 600 "$AUTHORIZED"
 chown "$USER_NAME:$(id -gn "$USER_NAME")" "$AUTHORIZED"
-# Restrict SSH key to the Agent VM IP. Do not allow forwarding or SSH agent forwarding.
+# Restrict SSH key to the gateway's IP. Do not allow forwarding or SSH agent forwarding.
 ENTRY="from=\"$SOURCE_IP\",no-agent-forwarding,no-X11-forwarding,no-port-forwarding ssh-ed25519 $key hla-gateway"
 if ! grep -Fq "$key" "$AUTHORIZED"; then
   printf '%s\n' "$ENTRY" >> "$AUTHORIZED"
@@ -42,13 +60,13 @@ if [[ "$MODE" == '--admin' ]]; then
   if [[ -e "$SUDOFILE" ]]; then
     echo "Preserving existing $SUDOFILE; confirm it allows intended operations."
   else
-    printf '%s\n' 'svc-hla-agent ALL=(root) NOPASSWD: ALL' > "$SUDOFILE"
+    printf '%s ALL=(root) NOPASSWD: ALL\n' "$USER_NAME" > "$SUDOFILE"
     chmod 440 "$SUDOFILE"
   fi
   visudo -cf "$SUDOFILE"
 else
   echo 'No sudo privileges granted by this script; use --admin only after risk review.'
 fi
-printf '\nHost ED25519 fingerprint (verify before trusting in Infisical):\n'
+printf '\nHost ED25519 fingerprint (compare it with what the gateway reports on first connect):\n'
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 printf '\nDone. Test login from %s before closing your admin session.\n' "$SOURCE_IP"

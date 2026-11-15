@@ -14,11 +14,11 @@ for name in "${SERVERS[@]}"; do
     echo "SKIP $name: existing key (never overwrite)"
     continue
   fi
-  # Headless gateway: encrypted at rest through Infisical rather than key passphrase.
+  # Headless gateway: no passphrase; the gateway keeps the key encrypted in its secret store.
   ssh-keygen -q -t ed25519 -N '' -C "hla-gateway-$name" -f "$key"
   chmod 600 "$key"; chmod 644 "$key.pub"
   echo "CREATED $name"
 done
 printf '\nPrivate keys: %s (DO NOT copy to target VMs or Git)\n' "$BASE"
 printf 'Public keys:  %s/<name>.pub\n' "$BASE"
-printf 'Store a *different* private key in each Infisical folder /servers/<name>.\n'
+printf 'Each server gets its own key; ./setup.sh imports them into the gateway (or see README.md).\n'

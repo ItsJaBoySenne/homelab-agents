@@ -2,184 +2,213 @@
 
 [![tests](https://github.com/your-org/homelab-agents/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/your-org/homelab-agents/actions/workflows/tests.yml)
 
-Self-hosted AI agents for your homelab. You chat with agents, give them multi-step projects and recurring
-checks, and let them deploy apps and work on Home Assistant. Every action on a server goes through the SSH gateway,
-which checks each agent's permission level on every call. The models never see SSH keys or API tokens.
+**Self-hosted AI agents for your homelab.** Chat with agents, hand them multi-step projects and recurring checks, and
+let them look after your servers, deploy apps, manage Proxmox VMs and tune Home Assistant: with a permission level
+per agent and per server, approvals for anything risky, and a full audit log.
 
-The dashboard is served at `/ui/` of the agent router, typically behind a reverse proxy with single sign-on
-(for example Traefik + Authelia at `https://agents.example.com/ui/`). The examples below assume the platform runs on
-a VM at `192.168.1.10`; replace that with your own address.
+The agents never see a password, SSH key or API token. Every action goes through the **gateway**, a separate
+container that holds all credentials, checks each call against your policy, runs it and returns only the result.
 
-The dashboard works on phones and can be installed as an app (PWA). On Android/Chrome use **Install app** in the
-browser menu. On iPhone use Safari's **Share → Add to Home Screen**. Installing needs the HTTPS address above. The
-installed app keeps only the page itself offline; data and agent runs always come live from the server.
+## Features
 
-**Notifications:** tap the 🔔 in the header, on each device you want them on, to get a push notification when a
-project task finishes, is blocked or waits for an approval, when a plan is ready, and when a project completes or
-pauses on its limits. Tapping a notification opens that project. On an iPhone this only works in the installed app
-(iOS 16.4 or later). A notification holds the project and task title, never task results.
+- **Conversations** with agents that stream their replies and tool steps live. Risky requests wait for *Approve
+  read-only*, *Approve & run* or *Reject*.
+- **Projects** for bigger goals: a planner splits the work into tasks for different agents, you approve the plan,
+  tasks run in parallel with reviews and approval gates, and stop only when they need you.
+- **Needs you**: one inbox for everything waiting on you (approvals, plans, blocked tasks), with push notifications
+  on your phone. The dashboard installs as an app (PWA).
+- **Levels and approvals**: every agent and every server gets a level from 0 (nothing) to 6 (free shell); an agent
+  acts at the lower of the two. Shell commands can require your approval, once each.
+- **The Chief**: a voice assistant for the car or the kitchen. Ask what is going on, get a spoken briefing, start or
+  approve work hands-free. Browser speech by default, optional server speech (Kokoro TTS, Whisper-compatible STT).
+- **Knowledge**: notes you and the agents write, and facts they verified (fresh or stale, re-checked weekly).
+- **Integrations**: SSH servers, Proxmox VE (inventory, power, snapshots, new VMs), TP-Link Omada, Home Assistant,
+  GitHub pull requests, remote **MCP** servers, your own HTTP tools, Git/Compose deployments with automatic rollback,
+  websites and reverse-proxy routes.
+- **Models**: OpenRouter (hundreds of models), xAI directly, or your own **Claude Pro/Max or ChatGPT Plus/Pro
+  subscription** through the official Claude Code / Codex CLIs. Costs per day, project, agent and model.
+- **Secrets agents use without seeing them**: agents write `{{secret:NAME}}`, the gateway fills it in, and output
+  shows `[secret:NAME]` instead of the value.
 
-## Components
+## Screenshots
 
-| Directory | What it is |
-|---|---|
-| [`agent-platform-starter/`](agent-platform-starter/README.md) | Agent router (FastAPI), dashboard, Postgres and queue worker |
-| [`ssh-gateway/`](ssh-gateway/README.md) | The only holder of SSH keys and service tokens: runs checks, commands, file writes, deploys and Home Assistant calls, within the policy |
-| [`ssh-fleet/`](ssh-fleet/README.md) | Scripts that prepare a VM for the gateway (service user `svc-hla-agent`, restricted key) |
+> _Screenshots coming soon: Overview with "Needs you", a conversation with an approval card, a project plan, the
+> Policy page and the Chief's car mode._ `agent-platform-starter/tests/e2e/shots.js` renders a set against the preview
+> server if you want to look before installing.
 
-```
-browser ── Traefik/Authelia ── agent-router :8088 ──┬── Postgres (tasks, conversations, projects, knowledge)
-                                                    ├── TypeSafe (risk check) · OpenRouter (models)
-                                                    └── hla-tool-net ── ssh-gateway-api :8099 ──┬── SSH to the servers
-                                                                                                   ├── Home Assistant API
-                                                                                                   └── Infisical (keys, tokens)
-```
+## Quick start
 
-## What it does
-
-- **Needs you** on Overview lists everything waiting for you, with a direct action or a link to it: commands
-  and risky requests to approve, plans to review, tasks waiting to start or stopped, paused projects. The count
-  shows on the Overview tab and in the browser tab title.
-- **Conversations** with agents. Replies stream live with their tool steps. Risky requests wait for **Approve
-  read-only**, **Approve & run** or **Reject**, and a command that needs approval appears as a card in the chat.
-  A reply that runs out of tool calls continues automatically. Search matches titles and message text; the ⋯
-  menu renames, archives or deletes a conversation (its tasks stay in Task history).
-- **Projects** for bigger work. A planner splits the goal into tasks for different agents, you approve the plan,
-  and tasks run in their own conversations. They run in parallel where possible, hand off to each other, and have
-  review rounds and gates for anything that deploys. They stop only when they need something from you.
-  A completed project keeps going: **Add features or changes** plans a new round on top of the finished tasks
-  (same folder, rules and notes), with its own budget.
-- **Schedules** post a fixed prompt into a conversation every hour, 6 h, 12 h, day or week.
-- **Knowledge**: notes you write, notes agents save (decisions, paths, conventions; never secret values) and facts
-  the agents verified, each marked fresh, stale or unverified. Projects have their own knowledge: a compact note per
-  finished task is kept automatically. Every run gets the notes and facts most relevant to its request (the project's
-  first), and long conversations keep a rolling summary of older turns.
-- **Audit** lists everything the SSH gateway ran, wrote, deployed or refused, with filters and a link to the
-  conversation it came from; secret values never appear. Stale diagnostic facts can be re-checked weekly.
-- **Costs**: spend per day, kind of work, model, project and agent, the costliest runs and budget use; a project warns
-  at 80% of its budget.
-- **Models**: the model registry. Search OpenRouter's catalog (price, context, tool support), add, enable or disable
-  models, pick the default and test a model with one tiny call. Cheaper models can be set per kind of work (planning,
-  reviews, continuations, summaries). `AGENT_ALLOWED_MODELS` / `OPENROUTER_WORKER_MODEL` only seed it and are the fallback.
-- **Pull requests** (opt-in per project; new projects merge directly): project tasks push a branch and open a PR on
-  GitHub (repositories you allow on the Policy page; the token stays in the gateway) instead of merging into main; open
-  PRs of finished projects wait in **Needs you**. The sandbox needs a way to push branches, and a write credential
-  there lets agents push any branch, so protect `main` with branch protection first (see the starter README).
-- **Connections**: credentials you enter once (encrypted in the gateway, never shown again), the GitHub token with a
-  connection test and a repository picker, and **HTTP tools**: simple API calls you define that agents make through
-  the gateway, which adds the credential, refuses private addresses unless allowed and audits every call.
-- **Deployments** of Git/Compose apps. Each commit is tested on the sandbox first, then deployed and verified,
-  and rolled back automatically if it fails.
-- **Home Assistant** through the gateway (token from Infisical `/HomeAssistant`). Every dashboard save is backed
-  up first.
-- **Secrets** the agents create and use without seeing them: the gateway generates passwords in the "Agent
-  Generated" Infisical project, agents write `{{secret:NAME}}` where a value belongs, and output shows
-  `[secret:NAME]` instead of the value.
-- **MCP servers**: agents use the tools of remote MCP servers (Streamable HTTP) through the gateway, which holds their
-  tokens, checks a level per server (`mcp:<name>`, off until raised) and per tool, and audits each call; the **MCP**
-  page registers servers and sets tool levels. stdio servers run behind a small proxy on a host.
-- **Websites**: every website on the website VM (Docker on `public-website`) with its public URL from Traefik, its
-  environment and a live status (HTTP and certificate checked through Traefik); a production site that goes down sends a
-  push notification and waits in **Needs you**. Read-only, through the gateway; Traefik's config never leaves it.
-- **Domains & routes** (on the Websites view): give a site a public address (subdomain of your domains, staging LAN-only
-  with a password by default) and the gateway writes it to its one Traefik file (`hla-managed.yml`), checks it through
-  the Traefik API and rolls back if Traefik refuses; hand-written Traefik files are never touched. Agents only request a
-  route; you approve it in **Needs you**. Projects can name their staging and production address.
-- **Proxmox** (Infrastructure view, optional): your nodes through the gateway, which holds the API tokens and checks TLS against
-  each node's CA. Power, snapshots and **Create VM** (Debian 13 cloud image, spec previewed and validated live), with
-  the new VM onboarded automatically (gateway-held SSH key, host key recorded) as a server at level 0. Agents get a
-  `proxmox` tool per node level (`proxmox:<node>`, off by default); creating a VM or a read-only monitoring token waits
-  for your approval of the exact spec, and destroying is limited to VMs the platform created, approved every time.
-- **Sandbox** (optional; a VM on an isolated VLAN, `SANDBOX_HOST`): a free shell for building and testing, and it can be
-  reset to its `clean` snapshot from the Policy page.
-
-## Permissions
-
-Each agent and each server (and Home Assistant) has a level on the **Policy** page. An agent acts at the
-**lower** of the two levels.
-
-| Level | Allows |
-|---|---|
-| 0 | Nothing |
-| 1 | Read-only diagnostics (Home Assistant: read states and dashboards; secrets: list and use) |
-| 2 | Install allowlisted packages |
-| 3 | Restart allowlisted services and containers |
-| 4 | Compose deploys and registered app deploys (Home Assistant: call services, save dashboards; secrets: create) |
-| 5 | Shell commands you approve, once each |
-| 6 | Free shell without approval (meant for the sandbox; secrets: replace existing values) |
-
-Proxmox nodes (`proxmox:proxmox`, `proxmox:pve2`) start at 0: 1 inventory, 4 power and snapshots, 5 create a VM or a
-read-only token with your approval, 6 rollback, create without approval, and destroy VMs the platform created (always
-with your approval).
-
-**Unhinged mode** (1 h, 8 h, 24 h or until switched off) lets level-5 agents act without approval on every server
-above level 0.
-
-## Deploy and update
-
-Secrets live on the host only: `agent-platform-starter/.env`, `ssh-gateway/.env.gateway` and the `*.pem` CA files
-(none are in this repository; see [`ssh-gateway/certs/README.md`](ssh-gateway/certs/README.md)).
-The `.example` files list every setting.
-
-The first time only, create the network the two stacks share:
+On a Linux machine (VM or bare metal) with Docker:
 
 ```bash
-sudo docker network create hla-tool-net
+git clone https://github.com/your-org/homelab-agents.git && cd homelab-agents
+./setup.sh          # a few questions; generates every password and key; builds and starts the stack
+# open the URL it prints (default http://127.0.0.1:8088/ui/) and log in with the password it shows once
 ```
 
-Deploy or update. Do the gateway first when both changed:
+`setup.sh` asks where the dashboard should listen (this machine only, or your LAN), which model provider to use
+(OpenRouter key, xAI key, or a ChatGPT/Claude subscription you sign in to later), whether to enable server voice, and
+optionally which servers the agents may reach. It is safe to re-run: it keeps every existing value and backs up each
+settings file before changing it. `./setup.sh --check` validates the configuration without changing anything, and
+`./setup.sh --help` lists the non-interactive options (`--yes`, `--provider`, `--listen`, `--server`, ...).
 
-```bash
-cd homelab-agents/ssh-gateway && sudo ./dc up -d --build ssh-gateway-api
-cd ../agent-platform-starter && sudo ./dc up -d --build --force-recreate agent-router
-curl -s http://192.168.1.10:8088/health        # {"status":"ok","database":"connected"}
+Then, in the dashboard:
+
+1. **Settings › Models**: check the default model, or sign in to a subscription under *Subscriptions*.
+2. **Agents**: create an agent, or talk to the Chief.
+3. **Policy**: raise the level of the servers and agents you want to use (everything starts at the safe end).
+
+To add a server later, re-run `./setup.sh` (it adds the server to `config/inventory.yaml`, creates its SSH key and
+prints the one-liner that installs the public key on it), or edit `config/inventory.yaml` yourself and run
+`docker compose up -d`.
+
+## Requirements
+
+- A Linux host with **Docker Engine** and the **Compose v2 plugin** (`docker compose` 2.24 or newer).
+- **2 vCPU and 4 GB RAM** minimum; add about 2 GB for Kokoro voice. About 10 GB of disk for the images, plus the
+  database and its nightly backups.
+- `openssl` or `python3` (for `setup.sh`), and `ssh-keygen` if setup should create server keys.
+- A model provider: an [OpenRouter](https://openrouter.ai) or [xAI](https://console.x.ai) API key, or a Claude /
+  ChatGPT subscription.
+- Not required: a domain, a reverse proxy, SSO or Infisical. See [optional add-ons](#optional-add-ons).
+
+## How it fits together
+
+```
+browser / phone ── (optional reverse proxy + SSO) ── agent-router :8088 ──┬── Postgres (+ nightly backups)
+                                                                          ├── model APIs / subscription CLIs
+                                                                          ├── kokoro (optional voice)
+                                                                          └── hla-tool-net ── gateway :8099 ──┬── SSH to your servers
+                                                                                                              ├── Proxmox, Omada, Home Assistant
+                                                                                                              ├── GitHub, MCP servers, HTTP tools
+                                                                                                              └── secret store (built-in or Infisical)
 ```
 
-The platform database is dumped every night into `agent-platform-starter/backups/` by the `backup` service
-(14 daily and 8 weekly dumps, each verified). The first deploy after it was added needs
-`cd agent-platform-starter && sudo ./dc up -d backup` once; copying dumps off the VM and restoring
-are in [the platform README](agent-platform-starter/README.md#backups).
+| Path | What it is |
+|---|---|
+| [`agent-platform-starter/`](agent-platform-starter/README.md) | Agent router (FastAPI), dashboard, queue worker, Postgres, backups, voice |
+| [`ssh-gateway/`](ssh-gateway/README.md) | The gateway: the only holder of keys and tokens; policy, audit and every tool call |
+| [`ssh-fleet/`](ssh-fleet/README.md) | Scripts that prepare a server for the gateway (locked service user, restricted key) |
+| `config/` | `inventory.yaml`: your servers and services (created by `setup.sh`) |
+| `compose.yaml`, `deploy/` | The one-command stack ([how it is put together](docs/configuration.md#compose-layout)) |
 
-`./dc` is `docker compose` with the right files for that directory. Database and gateway schema changes are
-applied on startup and only add tables, columns and indexes, so older code keeps running against a newer database.
+## Configuration
 
-## Roll back
+Four files, all created by `setup.sh`, none committed to git:
 
-Releases are commits on `main`. To run an earlier version of one or both parts:
+| File | What goes in it |
+|---|---|
+| `agent-platform-starter/.env` | Dashboard and database passwords, model keys, listen address, voice, feature switches |
+| `ssh-gateway/.env.gateway` | Gateway tokens (shared with the router), secret store backend and key, integration settings |
+| `config/inventory.yaml` | Servers the agents may reach (name, host, user, port, description, sandbox) and services (Proxmox, Omada, Home Assistant, GitHub) |
+| `.env` | Compose-level switches only, e.g. `COMPOSE_PROFILES=voice` |
+
+The settings you are most likely to touch:
+
+| Setting | File | Default | Meaning |
+|---|---|---|---|
+| `HLA_LISTEN_ADDRESS` | router `.env` | `127.0.0.1` | Address the dashboard listens on (port 8088). A LAN IP to reach it from other devices. |
+| `OPENROUTER_API_KEY`, `XAI_API_KEY` | router `.env` | empty | Model provider keys. Subscriptions need none. |
+| `OPENROUTER_WORKER_MODEL` | router `.env` | set by setup | Seeds the default model; after that the Models page decides. |
+| `HLA_SECRETS_BACKEND` | `.env.gateway` | `local` | `local`: built-in encrypted store (key `HLA_SECRETS_KEY`). `infisical`: your Infisical. |
+| `HLA_VOICE_LANGUAGE` | router `.env` | `en-US` | Default language of the Chief's car mode (en-US, en-GB, nl-BE, nl-NL). |
+| `HLA_RISK_REVIEW` | router `.env` | `false` | Optional TypeSafe risk scoring that holds risky requests for approval. |
+| `BACKUP_TIME`, `BACKUP_KEEP_DAYS` | router `.env` | `03:30`, `14` | Nightly database backup time and retention. |
+
+Full reference, inventory format and split installs (the gateway on another machine):
+[docs/configuration.md](docs/configuration.md). The `.example` files document every setting inline.
+
+## Security model
+
+- **Agents never hold credentials.** SSH keys, API tokens and generated passwords stay in the gateway. The router
+  and the models only see results, with secret values masked.
+- **Two levels decide every action**: the agent's and the server's (0-6); the lower one wins. Anything above that is
+  refused or waits for your approval of that exact command. *Unhinged mode* (time-limited, off by default) is the only
+  way around approvals.
+- **Narrow keys**: each server gets its own Ed25519 key that only works from the gateway's address (`from=` in
+  `authorized_keys`), on a locked service account without sudo unless you grant it.
+- **Hardened containers**: read-only root file systems, no Linux capabilities, `no-new-privileges`; the gateway has no
+  published port.
+- **Everything is audited**: every command, file write, deploy, API call and refusal, linked to the conversation it
+  came from.
+- The dashboard listens on localhost by default. Put HTTPS and single sign-on in front before exposing it beyond
+  your LAN.
+
+Details and hardening tips: [docs/security.md](docs/security.md). Reporting a vulnerability: [SECURITY.md](SECURITY.md).
+
+## Optional add-ons
+
+| Add-on | What you get | How |
+|---|---|---|
+| **HTTPS + single sign-on** | Access from anywhere, phone install and push notifications, named approvers | Any reverse proxy (Traefik, Caddy, nginx) plus an SSO (Authelia, Authentik, ...): [docs/security.md](docs/security.md#https-and-single-sign-on) |
+| **Infisical** | Secrets in your existing Infisical instead of the built-in store | `HLA_SECRETS_BACKEND=infisical`: [docs/configuration.md](docs/configuration.md#secret-store) |
+| **Server voice** | Kokoro text-to-speech (and any Whisper-compatible speech-to-text) for the Chief | `./setup.sh` → voice yes, or `COMPOSE_PROFILES=voice`: [docs/integrations.md](docs/integrations.md#voice-the-chief) |
+| **Integrations** | Proxmox, Omada, Home Assistant, GitHub, MCP, deployments, websites | [docs/integrations.md](docs/integrations.md) |
+
+## Updating
 
 ```bash
 cd homelab-agents
-git checkout <commit-or-tag> -- agent-platform-starter ssh-gateway
-cd ssh-gateway && sudo ./dc up -d --build ssh-gateway-api
-cd ../agent-platform-starter && sudo ./dc up -d --build --force-recreate agent-router
+git pull
+./setup.sh --check              # reports anything new that needs a value
+docker compose up -d --build
 ```
 
-To go back to the latest version afterwards, run `git checkout HEAD -- agent-platform-starter ssh-gateway`, then
-the same two deploy commands.
+Schema changes are applied on startup and only add tables, columns and indexes, so an older version keeps running
+against a newer database. To roll back: `git checkout <tag-or-commit>` and the same `up` command.
+
+## Backups
+
+The `backup` service dumps the database every night (03:30 UTC by default) into `agent-platform-starter/backups/`,
+verifies each dump, and keeps 14 daily and 8 weekly ones. One now: `sudo agent-platform-starter/scripts/backup-now.sh`.
+Restore (into a copy by default): `sudo agent-platform-starter/scripts/restore-backup.sh <dump>`.
+
+**Copy backups off the machine regularly**, together with the four configuration files above and the secret store
+(the `homelab-agents_gateway_secrets` volume plus `HLA_SECRETS_KEY`, or your Infisical). Details:
+[agent-platform-starter/README.md](agent-platform-starter/README.md#backups).
+
+## Uninstall
+
+```bash
+cd homelab-agents
+docker compose --profile voice --profile tools down      # remove the containers, keep the data volumes
+docker compose --profile voice --profile tools down -v   # ...and delete the volumes: database, secrets, sign-ins
+```
+
+Then delete the folder (it holds your settings, inventory and backups), the server keys in `~/.ssh/hla-fleet/` if
+setup created them, and the service account on each server (`sudo userdel -r svc-hla-agent`).
+
+## FAQ and troubleshooting
+
+**`setup.sh` says the Docker daemon is not reachable.** Start it (`sudo systemctl start docker`) or add yourself to the
+`docker` group (`sudo usermod -aG docker $USER`, then log in again). Your answers are saved; run `./setup.sh` again.
+
+**The dashboard does not load.** `docker compose ps` (is `agent-router` healthy?) and
+`docker compose logs --tail 80 agent-router`. `curl http://127.0.0.1:8088/health` should answer
+`{"status":"ok","database":"connected"}`; use your LAN address instead of 127.0.0.1 if you chose one.
+
+**I lost the dashboard password.** `./setup.sh --reset-password` makes a new one and shows it once; it restarts the
+stack for you.
+
+**Agents answer "Missing server setting: OPENROUTER_WORKER_MODEL".** There is no default model yet: pick one under
+Settings › Models (after adding an API key or signing in to a subscription).
+
+**An agent cannot reach my server.** Check the server's level on the Policy page, that the public key is installed
+([ssh-fleet/README.md](ssh-fleet/README.md)) and the gateway log: `docker compose logs --tail 50 ssh-gateway-api`.
+The address the server sees the connection from must match the `from=` address in its `authorized_keys`.
+
+**Can I use it without any servers?** Yes. Conversations, projects, knowledge and the Chief work without SSH targets;
+add servers when you want the agents to act on them.
+
+**Can the gateway run on another machine?** Yes: [docs/configuration.md](docs/configuration.md#split-installs).
+
+**Port 8088 is taken.** Change the published port in `agent-platform-starter/compose.yaml` (`...:8088:8080`).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The suites need Python, a throwaway Postgres (one `docker run` line) and, for the
+browser tests, Playwright. CI runs everything on every push: [`.github/workflows/tests.yml`](.github/workflows/tests.yml).
 
 ## License
 
 [MIT](LICENSE).
-
-## Tests
-
-No Docker or root needed. See [`agent-platform-starter/tests/README.md`](agent-platform-starter/tests/README.md).
-
-- `tests/local-env.sh <dir>` builds a throwaway Postgres, a Python venv and headless Chromium.
-- `tests/test_thread_approval.py`: the backend suite.
-- `tests/e2e/`: browser end-to-end tests and a preview server with mocked model providers.
-- `tests/perf/`: load and query benchmarks.
-- `ssh-gateway/tests/test_*.py`: gateway suites (policy, files, deploys, Home Assistant, maintenance). These run
-  with SSH and Infisical stubbed.
-
-## Continuous integration
-
-[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs on every push and pull request to `main` (and by
-hand from the Actions tab), with no secrets: the suites mock the model providers, Infisical and SSH.
-
-- **gateway**: every `ssh-gateway/tests/test_*.py` on Python 3.12 with paramiko.
-- **backend**: `tests/test_thread_approval.py` against a Postgres 17 service container.
-- **e2e**: the preview server on that Postgres, then `tests/e2e/e2e.js` in Playwright Chromium. On failure the
-  screenshots, the preview server log and the test output are attached to the run as `e2e-output`.
-
-A newer push to the same branch cancels the run still going.

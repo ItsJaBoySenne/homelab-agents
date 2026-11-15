@@ -1,0 +1,35 @@
+# Additions to ssh-gateway/compose*.yaml for the single-project install (../compose.yaml).
+# Relative paths here resolve against ssh-gateway/ (the include's project directory).
+services:
+  ssh-gateway-api:
+    volumes:
+      # Built-in encrypted secret store (HLA_SECRETS_BACKEND=local, key HLA_SECRETS_KEY in .env.gateway).
+      - gateway_secrets:/data/secrets
+      - type: bind
+        source: ../config/inventory.yaml
+        target: /config/inventory.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8099), 3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+  # The one-off CLI container (profile "tools") sees the same store and inventory.
+  ssh-gateway:
+    volumes:
+      - gateway_secrets:/data/secrets
+      - type: bind
+        source: ../config/inventory.yaml
+        target: /config/inventory.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+volumes:
+  gateway_secrets:
+networks:
+  hla_tool_net:
+    external: false
+    name: hla-tool-net

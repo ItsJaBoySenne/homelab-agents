@@ -4,6 +4,19 @@ Prepares a Linux VM for `../ssh-gateway`: a locked `svc-hla-agent` account with 
 works from the gateway VM's address. After installing, store the key and the host fingerprint in Infisical under
 `/servers/<name>` and add the server to `SERVERS` in `ssh-gateway/gateway/core.py`.
 
+## Quick path
+
+`../setup.sh` does most of this for you: for every server in `config/inventory.yaml` it generates a key with
+`01-generate-keys.sh`, imports the private key into the gateway's secret store and prints a one-liner per server that
+copies `02-install-on-server.sh` there and runs it with the public key inline:
+
+```bash
+scp ssh-fleet/02-install-on-server.sh admin@192.168.1.21:/tmp/hla-install.sh && \
+  ssh -t admin@192.168.1.21 "sudo bash /tmp/hla-install.sh 'ssh-ed25519 AAAA... hla-gateway-server1' 192.168.1.10 --user svc-hla-agent; rm -f /tmp/hla-install.sh"
+```
+
+The rest of this page is the manual route and the background.
+
 ## Safety before deployment
 
 - Snapshot/backup each VM and validate restores; do one VM at a time.
@@ -39,6 +52,8 @@ SSH in using your existing admin account and run (the second argument is the age
 
 ```bash
 sudo bash /tmp/02-install-on-server.sh /tmp/hla-agent.pub 192.168.1.10
+# or with the key inline and another account name (must match "user" in config/inventory.yaml):
+# sudo bash /tmp/02-install-on-server.sh 'ssh-ed25519 AAAA... hla-gateway-server1' 192.168.1.10 --user svc-hla-agent
 # ONLY on disposable dev VM AFTER backup and explicit risk review:
 # sudo bash /tmp/02-install-on-server.sh /tmp/hla-agent.pub 192.168.1.10 --admin
 sudo rm -f /tmp/hla-agent.pub /tmp/02-install-on-server.sh

@@ -3851,7 +3851,8 @@ const CAR={chief:null,config:{server_stt:false,server_tts:false,tts_voices:[]},s
 const CAR_SR=window.SpeechRecognition||window.webkitSpeechRecognition||null;
 const CAR_SILENCE_MS=1500,CAR_IDLE_MS=60000,CAR_MAX_RECORD_MS=45000;
 const carPref=(k,d)=>store.get('chief.'+k)??d;
-function carLang(){return carPref('lang','nl-BE')}
+// The car mode's language: this browser's choice, else the server default (HLA_VOICE_LANGUAGE, en-US unless set).
+function carLang(){return carPref('lang',CAR.config&&CAR.config.language||'en-US')}
 function carSttEngine(){const want=carPref('stt','browser');return want==='server'&&CAR.config.server_stt?'server':CAR_SR?'browser':CAR.config.server_stt?'server':'none'}
 function carTtsEngine(){const want=carPref('tts','browser');return want==='server'&&CAR.config.server_tts?'server':'speechSynthesis' in window?'browser':CAR.config.server_tts?'server':'none'}
 (function(){
@@ -3871,7 +3872,7 @@ function carTtsEngine(){const want=carPref('tts','browser');return want==='serve
 <button type="button" class="car-btn" id="car-stop">■ Stop</button></div>
 <div class="car-settings" id="car-settings" hidden><h2>Voice settings</h2>
 <label>Chief's model<select id="car-model"></select></label><p class="fineprint">For quick answers pick a fast model without reasoning; the Task detail's Timings show where a turn's time went.</p>
-<label>Language<select id="car-lang"><option value="nl-BE">Nederlands (België)</option><option value="nl-NL">Nederlands (Nederland)</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option></select></label>
+<label>Language<select id="car-lang"><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="nl-BE">Nederlands (België)</option><option value="nl-NL">Nederlands (Nederland)</option></select></label>
 <label>Listen with<select id="car-stt"><option value="browser">This browser</option><option value="server">Server (speech service)</option></select></label>
 <label>Speak with<select id="car-tts"><option value="browser">This browser</option><option value="server">Server (speech service)</option></select></label>
 <label>Voice<select id="car-voice"></select></label>
@@ -3912,7 +3913,7 @@ async function carOpen(){
  if(navigator.onLine===false)return carStatus('offline');
  try{
   const [chief,config,models]=await Promise.all([api('chief'),api('voice/config').catch(()=>CAR.config),api('models').catch(()=>null)]);
-  CAR.chief=chief;CAR.config=config;
+  CAR.chief=chief;CAR.config=config;$('car-lang').value=carLang();
   const sel=$('car-model');sel.replaceChildren();
   const list=models&&models.models||[];if(chief.model&&!list.includes(chief.model))sel.add(new Option(chief.model,chief.model));
   for(const v of list)sel.add(new Option(modelOptionText(models,v),v));if(chief.model)sel.value=chief.model;if(typeof subsDecorate==='function')subsDecorate(sel);  // HLA_SUBSCRIPTIONS_V1

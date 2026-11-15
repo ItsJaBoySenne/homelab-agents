@@ -1,0 +1,32 @@
+# Homelab Agents: the whole stack in one project. Start it with ./setup.sh (first time) or:
+#
+#   docker compose up -d --build          # router, queue worker, Postgres, nightly backups, gateway API
+#   docker compose --profile voice up -d  # plus Kokoro text-to-speech for the Chief's car mode
+#
+# (setup.sh writes COMPOSE_PROFILES=voice into ./.env when you enable voice, so a plain `up` includes it.)
+#
+# How it is put together: the service definitions stay in the component folders, so there is one place that sets
+# their hardening (read-only root file system, tmpfs, cap_drop, healthchecks, limits). Each folder is included with its
+# own settings file, which also feeds the ${...} variables in that folder's compose file:
+#   agent-platform-starter/compose.yaml   + agent-platform-starter/.env
+#   ssh-gateway/compose*.yaml             + ssh-gateway/.env.gateway
+# deploy/*.yaml adds only what the single-project install needs on top: the server inventory (read-only, at
+# /config/inventory.yaml in both containers), the gateway's secret store volume, healthchecks, the voice profile and
+# the shared network, owned by this project instead of being created by hand.
+#
+# The folder compose files keep working on their own (`./dc` in each folder) for split installs, e.g. the gateway on
+# another VM; see docs/configuration.md.
+name: homelab-agents
+
+include:
+  - path:
+      - agent-platform-starter/compose.yaml
+      - deploy/router.yaml
+    project_directory: agent-platform-starter
+    env_file: agent-platform-starter/.env
+  - path:
+      - ssh-gateway/compose.yaml
+      - ssh-gateway/compose.tools-api.yaml
+      - deploy/gateway.yaml
+    project_directory: ssh-gateway
+    env_file: ssh-gateway/.env.gateway

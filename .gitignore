@@ -41,3 +41,7 @@ node_modules/
 .DS_Store
 .idea/
 .vscode/
+
+# Written by setup.sh: your inventory and the timestamped backups of changed settings files.
+config/inventory.yaml
+*.backup-[0-9]*

@@ -1704,7 +1704,7 @@ async function go(pg, view) {
   // HLA_VOICE_V1: the Chief's car mode on a phone, with the browser's speech recognition and speech stubbed.
   const carCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await carCtx.addInitScript(() => {
-    window.__said = []; window.__heard = 'Hoe staat het met de projecten';
+    window.__said = []; window.__heard = 'How are the projects doing';
     class FakeRecognition {
       start() { this.t = setTimeout(() => { const alt = [{ transcript: window.__heard }]; alt.isFinal = true; this.onresult && this.onresult({ resultIndex: 0, results: [alt] }); }, 200); }
       stop() { clearTimeout(this.t); this.onend && this.onend(); }
@@ -1748,19 +1748,19 @@ async function go(pg, view) {
         'Car mode hides the shell chrome, enlarges the orb and controls, and "Exit car mode" brings everything back ' + JSON.stringify(focusTalk));
   await car.click('#car-talk');
   await car.waitForSelector('#car-status:has-text("Listening")', { timeout: 3000 });
-  await car.waitForSelector('.car-you .car-text:has-text("Hoe staat het met de projecten")', { timeout: 8000 });
-  await car.waitForSelector('.car-chief .car-text:has-text("Open Needs you om het goed te keuren")', { timeout: 15000 });
+  await car.waitForSelector('.car-you .car-text:has-text("How are the projects doing")', { timeout: 8000 });
+  await car.waitForSelector('.car-chief .car-text:has-text("Open Needs you to approve it")', { timeout: 15000 });
   await car.waitForSelector('#car-status:has-text("Ready")', { timeout: 8000 });
   const said = await car.evaluate(() => window.__said.join(' | '));
-  check(posted.length === 1 && JSON.parse(posted[0]).voice === true && JSON.parse(posted[0]).content === 'Hoe staat het met de projecten', 'what was heard is sent as a voice turn ' + posted[0]);
-  check(said.includes('Alles draait.') && said.includes('Open Needs you') && said.split(' | ').length >= 3 && !said.includes('**'), 'the reply is spoken sentence by sentence ' + said);
+  check(posted.length === 1 && JSON.parse(posted[0]).voice === true && JSON.parse(posted[0]).content === 'How are the projects doing', 'what was heard is sent as a voice turn ' + posted[0]);
+  check(said.includes('Everything is running.') && said.includes('Open Needs you') && said.split(' | ').length >= 3 && !said.includes('**'), 'the reply is spoken sentence by sentence ' + said);
   check(await car.isVisible('#car-needs'), 'a reply that needs the owner shows "Open Needs you"');
-  // Briefing: a Dutch request (nl-BE is the default language), answered and spoken.
+  // Briefing: an English request (en-US is the default language, HLA_VOICE_LANGUAGE), answered and spoken.
   await car.evaluate(() => { window.__said = []; });
   await car.click('#car-briefing');
-  await car.waitForSelector('.car-you .car-text:has-text("Geef me mijn briefing")', { timeout: 5000 });
-  await car.waitForFunction(() => window.__said.some(s => s.includes('Alles draait')), null, { timeout: 15000 });
-  check(JSON.parse(posted[1]).content.startsWith('Geef me mijn briefing: wat is er veranderd sinds') && JSON.parse(posted[1]).voice === true, 'Briefing asks what changed since the last visit ' + JSON.parse(posted[1]).content);
+  await car.waitForSelector('.car-you .car-text:has-text("Give me my briefing")', { timeout: 5000 });
+  await car.waitForFunction(() => window.__said.some(s => s.includes('Everything is running')), null, { timeout: 15000 });
+  check(JSON.parse(posted[1]).content.startsWith('Give me my briefing: what changed since') && JSON.parse(posted[1]).voice === true, 'Briefing asks what changed since the last visit ' + JSON.parse(posted[1]).content);
   await car.waitForSelector('#car-status:has-text("Ready")', { timeout: 8000 });
   // Barge in: tapping while he speaks stops speech and listens.
   const barge = await car.evaluate(() => { carSpeak('Een lange zin om te onderbreken.'); carSpeak('Nog een zin.');
@@ -1776,13 +1776,14 @@ async function go(pg, view) {
   await car.waitForTimeout(400); posted.length = 2;
   // Settings: the model picker changes the Chief's model; language and voice are remembered.
   await car.click('#car-settings-toggle');
-  check(await car.isVisible('#voice-drawer #car-settings') && await car.evaluate(() => !!document.querySelector('#voice-drawer:not([hidden])') && document.querySelector('main').inert) && await car.$$eval('#car-model option', o => o.length) >= 2 && await car.$$eval('#car-voice option', o => o.map(x => x.textContent).join()).then(t => t.includes('Test Vlaams') && !t.includes('Test English')),
-        'settings: model choices and voices for the chosen language');
+  check(await car.isVisible('#voice-drawer #car-settings') && await car.evaluate(() => !!document.querySelector('#voice-drawer:not([hidden])') && document.querySelector('main').inert) && await car.$$eval('#car-model option', o => o.length) >= 2 && await car.$$eval('#car-voice option', o => o.map(x => x.textContent).join()).then(t => t.includes('Test English') && !t.includes('Test Vlaams'))
+        && await car.inputValue('#car-lang') === 'en-US',
+        'settings: model choices, en-US by default and voices for the chosen language');
   await car.selectOption('#car-model', 'anthropic/claude-sonnet-5.5');
   await car.waitForFunction(async () => (await (await fetch('/ui/api/chief')).json()).model === 'anthropic/claude-sonnet-5.5', null, { timeout: 5000 });
-  await car.selectOption('#car-lang', 'en-US');
-  check(await car.$$eval('#car-voice option', o => o.map(x => x.textContent).join()).then(t => t.includes('Test English') && !t.includes('Test Vlaams'))
-        && await car.evaluate(() => localStorage.getItem('hla.chief.lang')) === 'en-US', 'language switch lists its voices and is remembered; model saved');
+  await car.selectOption('#car-lang', 'nl-BE');
+  check(await car.$$eval('#car-voice option', o => o.map(x => x.textContent).join()).then(t => t.includes('Test Vlaams') && !t.includes('Test English'))
+        && await car.evaluate(() => localStorage.getItem('hla.chief.lang')) === 'nl-BE', 'language switch (to Dutch) lists its voices and is remembered; model saved');
   await car.click('#car-settings-close');
   check(await car.isHidden('#voice-drawer') && await car.evaluate(() => document.activeElement && document.activeElement.id === 'car-settings-toggle'), 'voice settings: Done closes the drawer and focus returns to the settings button');
   await car.click('#car-settings-toggle'); await car.waitForSelector('#voice-drawer:not([hidden])');

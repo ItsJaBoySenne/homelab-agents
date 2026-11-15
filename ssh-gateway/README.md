@@ -87,14 +87,18 @@ Servers are prepared with `../ssh-fleet`. VMs the gateway creates on Proxmox are
 
 ## Configuration and deploy
 
-`.env.gateway` (see `.env.gateway.example`) holds the gateway's own Infisical identity, `TOOL_GATEWAY_TOKEN` and
-`POLICY_ADMIN_TOKEN` (both with the same values as in the agent platform's `.env`).
-`./dc` is `docker compose` with both compose files.
+`.env.gateway` (see `.env.gateway.example`; `../setup.sh` creates it) holds `TOOL_GATEWAY_TOKEN` and
+`POLICY_ADMIN_TOKEN` (the same values as in the agent platform's `.env`), the secret store settings
+(`HLA_SECRETS_BACKEND`, `HLA_SECRETS_KEY`, or the `INFISICAL_*` identity) and the integration settings. The servers and
+services come from `../config/inventory.yaml`, mounted read-only at `/config/inventory.yaml`. The gateway runs as part
+of the one Compose project at the repository root; `./dc` here runs `docker compose` against it (or, with
+`HLA_STANDALONE=1`, against this folder's own `compose.yaml` + `compose.tools-api.yaml`).
 
 ```bash
-cd homelab-agents/ssh-gateway
-sudo ./dc up -d --build ssh-gateway-api          # deploy or update the API
-sudo ./dc logs --tail 50 ssh-gateway-api
+cd homelab-agents
+docker compose up -d --build ssh-gateway-api     # deploy or update the API
+docker compose logs --tail 50 ssh-gateway-api
+cd ssh-gateway
 python3 tests/test_autonomy.py                   # maintenance scripts against stand-in apt/systemd/docker
 python3 tests/test_policy.py                     # API + policy rules (needs paramiko; SSH is stubbed)
 python3 tests/test_investigate.py                # path/container investigations, run on a local folder

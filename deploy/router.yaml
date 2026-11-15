@@ -1,0 +1,27 @@
+# Additions to agent-platform-starter/compose.yaml for the single-project install (../compose.yaml).
+# Relative paths here resolve against agent-platform-starter/ (the include's project directory).
+services:
+  agent-router:
+    volumes:
+      # Server inventory (config/inventory.yaml, written by setup.sh). create_host_path: false makes a missing file an
+      # error instead of Docker silently creating an empty directory in its place.
+      - type: bind
+        source: ../config/inventory.yaml
+        target: /config/inventory.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=4)"]
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 40s
+  # Optional text-to-speech: only with `--profile voice` (or COMPOSE_PROFILES=voice in ../.env).
+  kokoro:
+    profiles: ["voice"]
+networks:
+  # Shared with the gateway; created by this project (the folder compose files expect it to exist already).
+  hla_tool_net:
+    external: false
+    name: hla-tool-net
