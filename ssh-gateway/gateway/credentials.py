@@ -4,10 +4,12 @@ entered on the dashboard and kept encrypted in the gateway's own database.
   - Write-only from the outside: the API lists names and metadata, never values. A value can be replaced or
     deleted, not read back. Only gateway code (a connection making its call) decrypts a value.
   - AES-256-GCM with GATEWAY_CREDENTIAL_KEY (32 random bytes, base64; e.g. `openssl rand -base64 32`), which lives
-    only in .env.gateway. Without the key the store is off (`credentials_not_configured`); losing the key makes
-    stored values unreadable (enter them again), it never exposes them.
-  - Every value is masked in all gateway replies and audit rows ([credential:NAME]), like the Agent Generated secrets.
-  - Agents cannot reference these values: {{secret:NAME}} only reaches the Agent Generated project.
+    only in .env.gateway. When it is not set, a key derived from HLA_SECRETS_KEY (the secret store's key) is used, so
+    one generated key covers both; setting GATEWAY_CREDENTIAL_KEY later makes values stored before unreadable.
+    Without either the store is off (`credentials_not_configured`); losing the key makes stored values unreadable
+    (enter them again), it never exposes them.
+  - Every value is masked in all gateway replies and audit rows ([credential:NAME]), like the generated secrets.
+  - Agents cannot reference these values: {{secret:NAME}} only reaches the generated namespace of the secret store.
 """
 import base64
 import hashlib
@@ -42,11 +44,24 @@ def migrate(db):
         created_at REAL NOT NULL, updated_at REAL NOT NULL, updated_by TEXT NOT NULL DEFAULT '')''')
 
 
+def _derived_key():
+    """32 bytes from HLA_SECRETS_KEY (HMAC with a fixed label, so it is never the secret store's own key), or None."""
+    from . import secret_store
+    try:
+        base = base64.urlsafe_b64decode(secret_store.parse_key(os.getenv('HLA_SECRETS_KEY', '')))
+    except secret_store.SecretStoreError:
+        return None
+    return hmac.new(base, b'hla-credential-store-v1', hashlib.sha256).digest()
+
+
 def _key():
     raw = os.getenv('GATEWAY_CREDENTIAL_KEY', '').strip()
     if not raw:
+        derived = _derived_key()
+        if derived:
+            return derived
         raise CredentialError(503, 'credentials_not_configured',
-                              'set GATEWAY_CREDENTIAL_KEY in .env.gateway (openssl rand -base64 32) and restart the gateway')
+                              'set HLA_SECRETS_KEY (or GATEWAY_CREDENTIAL_KEY) in .env.gateway and restart the gateway')
     try:
         key = base64.b64decode(raw, validate=True)
     except ValueError:

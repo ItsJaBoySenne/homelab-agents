@@ -30,6 +30,8 @@ for _dir, _file, _text in (('claude/.claude', '.credentials.json', '{"fake": tru
     os.makedirs(os.path.join(os.environ['HLA_ENGINES_DIR'], _dir), mode=0o700, exist_ok=True)
     with open(os.path.join(os.environ['HLA_ENGINES_DIR'], _dir, _file), 'w') as _fh:
         _fh.write(_text)
+# HLA_INVENTORY_V1: the fixture inventory the suites were written against (servers dev, sandbox, public-website, ...).
+os.environ.setdefault('HLA_INVENTORY', os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'fixtures', 'inventory.yaml'))
 os.environ.update(json.loads(os.environ.get('DEV_EXTRA_ENV', '{}')))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import httpx, psycopg, sqlite3
@@ -154,7 +156,7 @@ def connections_gateway(request):
         return httpx.Response(status, json=gw_creds.redact(payload, stored()))
     try:
         if path == '/v1/credentials' and method == 'GET':
-            return reply(200, gw_creds.listing(GW_DB))
+            return reply(200, {**gw_creds.listing(GW_DB), 'secret_store': {'backend': os.environ.get('HLA_SECRETS_BACKEND') or 'local', 'configured': True}})
         if path.startswith('/v1/credentials/'):
             name = path.rsplit('/', 1)[1]
             if method == 'DELETE':
@@ -171,7 +173,7 @@ def connections_gateway(request):
             if body['operation'] == 'status':
                 if not token:
                     return reply(200, {'service': 'github', 'configured': False, 'source': None, 'ok': False, 'error': 'github_not_configured',
-                                       'detail': 'no GITHUB_TOKEN in .env.gateway or in Infisical /GitHub'})
+                                       'detail': 'no GITHUB_TOKEN on the Connections page, in .env.gateway or in the secret store (GitHub/GITHUB_TOKEN)'})
                 return reply(200, {'service': 'github', 'configured': True, 'source': 'store', 'ok': True, 'login': 'hla-bot',
                                    'name': 'Homelab Agents Bot', 'token_type': 'fine-grained', 'scopes': None})
             if not token:
@@ -266,7 +268,7 @@ def ws_execute(server, command, timeout=30, max_output=12000, stdin=None):
 
 # HLA_ROUTES_V1: the real managed-routes code (gateway/routes.py) against a simulated traefik host: the managed file
 # lives in memory, the "Traefik API" loads it next to the hand-written routers above, DNS answers from a table and the
-# basic-auth password comes from a stand-in for the Agent Generated project (it never reaches the browser).
+# basic-auth password comes from a stand-in for the generated secrets (it never reaches the browser).
 import base64 as _b64
 from gateway import routes as gw_routes
 gw_routes.migrate(GW_DB)
@@ -422,7 +424,7 @@ def _px_audit(server, action, d, result=None, actor=None, agent=None, detail=Non
 # its HTTP layer; the certificate starts untrusted so the panel shows its Trust button.
 from gateway import omada as gw_om
 gw_om.migrate(GW_DB)
-gw_om._secrets = lambda folder, names: {'APPLICATION_NAME': 'hla-agents', 'CLIENT_ID': 'preview-client', 'CLIENT_SECRET': 'preview-omada-secret-1234'}
+gw_om._secrets = lambda folder, names, optional=(): {'APPLICATION_NAME': 'hla-agents', 'CLIENT_ID': 'preview-client', 'CLIENT_SECRET': 'preview-omada-secret-1234'}
 _OM_CID = 'c0ffee12preview'
 _OM_CLIENTS = [{'mac': 'BC-24-11-00-02-05', 'ip': '192.168.10.205', 'name': 'monitoring', 'hostName': 'monitoring', 'wireless': False,
                 'networkName': 'Servers', 'vid': 30, 'switchName': 'SG2210P', 'active': True},
@@ -584,7 +586,9 @@ async def handler(request):
                 return httpx.Response(200, json=gw_policy.update(GW_DB, body.get('change'), body.get('actor')))
             except ValueError as exc:
                 return httpx.Response(400, json={'error': 'invalid_policy', 'detail': str(exc)})
-        return httpx.Response(200, json=gw_policy.snapshot(GW_DB))
+        from gateway import core as gw_core
+        return httpx.Response(200, json={**gw_policy.snapshot(GW_DB), 'secret_store': {'backend': os.environ.get('HLA_SECRETS_BACKEND') or 'local', 'configured': True},
+                                         'roles': {'sandbox': gw_core.SANDBOX, 'website': gw_core.WEBSITE_SERVER, 'traefik': gw_core.TRAEFIK_SERVER}})
     if request.url.host == 'ssh-gateway-api' and request.url.path == '/v1/deployments':
         return httpx.Response(200, json={'deployments': gw_deploy.history(GW_DB)})
     if request.url.host == 'ssh-gateway-api' and request.url.path == '/v1/deploy':

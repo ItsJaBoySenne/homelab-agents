@@ -3,6 +3,8 @@ RFC 6455 WebSocket) on localhost, Infisical replaced by a stand-in.
 
 python3 tests/test_homeassistant.py   (needs paramiko importable; no network)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import base64
 import hashlib
 import json
@@ -112,10 +114,10 @@ fake = ThreadingHTTPServer(('127.0.0.1', 0), FakeHA)
 threading.Thread(target=fake.serve_forever, daemon=True).start()
 SECRETS = {'HA_URL': ha.SERVICES[ha.NAME][0], 'HA_TOKEN': TOKEN}
 READS = []
-def fake_secrets(path, names):
+def fake_secrets(path, names, optional=()):
     READS.append(path)
-    return {n: SECRETS[n] for n in names}
-ha.infisical_secrets = fake_secrets
+    return {n: SECRETS[n] for n in tuple(names) + tuple(optional) if n in SECRETS}
+ha.platform_secrets = fake_secrets
 real_connection = ha.connection
 ha.connection = lambda: (real_connection()[0] and f'http://127.0.0.1:{fake.server_port}', real_connection()[1])
 

@@ -1,7 +1,10 @@
 """Reset the agent sandbox VM to its clean snapshot via the Proxmox API of its host (HLA_SANDBOX_V1).
 
-The token needs only VM.Snapshot.Rollback and VM.PowerMgmt on that one VM. TLS is verified against that
-host's own CA file: pve2 is a separate Proxmox install with a different CA than proxmox-ca.pem.
+The sandbox is the server with sandbox: true in the inventory (config/inventory.yaml); its vmid there is the VM to reset,
+and the Proxmox URL and node default to its node there (else the inventory's first Proxmox node) (SANDBOX_PROXMOX_URL, SANDBOX_PROXMOX_NODE and
+SANDBOX_VMID override them). The token needs only VM.Snapshot.Rollback and VM.PowerMgmt on that one VM. TLS is verified
+against the CA file SANDBOX_PROXMOX_CA (default /app/<node>-ca.pem, from <node>-ca.pem next to the Dockerfile): the
+host's own Proxmox CA (/etc/pve/pve-root-ca.pem on the node).
 """
 import asyncio
 import os
@@ -11,34 +14,44 @@ from urllib.parse import quote
 
 import httpx
 
-SANDBOX_HOST = '192.168.40.204'
+import inventory
+
+_INV = inventory.current()[0]
+_SANDBOX = inventory.server(_INV, inventory.sandbox(_INV) or '') or {}
+_NODES = (_INV['services'].get('proxmox') or {}).get('nodes') or [{}]
+_NODE = next((n for n in _NODES if n.get('name') == _SANDBOX.get('node')), _NODES[0])  # its node, else the first one
+SANDBOX_NAME = _SANDBOX.get('name')
+SANDBOX_HOST = _SANDBOX.get('host', '')
 _lock = asyncio.Lock()
 
 
 def config():
     cfg = {
-        'url': os.getenv('SANDBOX_PROXMOX_URL', 'https://192.168.20.31:8006').rstrip('/'),
-        'node': os.getenv('SANDBOX_PROXMOX_NODE', 'pve2'),
-        'vmid': os.getenv('SANDBOX_VMID', '204'),
+        'url': (os.getenv('SANDBOX_PROXMOX_URL', '') or _NODE.get('url') or '').rstrip('/'),
+        'node': os.getenv('SANDBOX_PROXMOX_NODE', '') or _NODE.get('name') or '',
+        'vmid': os.getenv('SANDBOX_VMID', '') or str(_SANDBOX.get('vmid') or ''),
         'snapshot': os.getenv('SANDBOX_SNAPSHOT', 'clean'),
         'token_id': os.getenv('SANDBOX_PROXMOX_TOKEN_ID', ''),
         'secret': os.getenv('SANDBOX_PROXMOX_TOKEN_SECRET', ''),
-        'ca': os.getenv('SANDBOX_PROXMOX_CA', '/app/pve2-ca.pem'),
+        'ca': os.getenv('SANDBOX_PROXMOX_CA', ''),
     }
+    cfg['ca'] = cfg['ca'] or f"/app/{cfg['node'] or 'proxmox'}-ca.pem"
+    if not SANDBOX_NAME:
+        return cfg, ['a server with sandbox: true in the inventory']
     missing = [name for name, key in (('SANDBOX_PROXMOX_TOKEN_ID', 'token_id'), ('SANDBOX_PROXMOX_TOKEN_SECRET', 'secret')) if not cfg[key]]
     if not os.path.isfile(cfg['ca']):
-        missing.append('pve2 CA file (pve2-ca.pem)')
+        missing.append(f"the Proxmox CA file ({os.path.basename(cfg['ca'])})")
     elif not os.access(cfg['ca'], os.R_OK):
-        missing.append('a readable pve2 CA file (pve2-ca.pem is not readable by the app; rebuild the image)')
+        missing.append(f"a readable Proxmox CA file ({os.path.basename(cfg['ca'])} is not readable by the app; rebuild the image)")
     if not (cfg['url'].startswith('https://') and cfg['vmid'].isdigit() and re.fullmatch(r'[A-Za-z0-9-]{1,63}', cfg['node'])
             and re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{1,39}', cfg['snapshot'])):
-        missing.append('valid SANDBOX_PROXMOX_URL/NODE/VMID/SNAPSHOT')
+        missing.append('valid SANDBOX_PROXMOX_URL/NODE/VMID/SNAPSHOT (or the sandbox vmid and a Proxmox node in the inventory)')
     return cfg, missing
 
 
 def describe():
     cfg, missing = config()
-    return {'configured': not missing, 'missing': missing, 'host': SANDBOX_HOST, 'node': cfg['node'],
+    return {'configured': not missing, 'missing': missing, 'name': SANDBOX_NAME, 'host': SANDBOX_HOST, 'node': cfg['node'],
             'vmid': cfg['vmid'], 'snapshot': cfg['snapshot'], 'resetting': _lock.locked()}
 
 
@@ -70,7 +83,7 @@ async def reset():
         try:
             tls = ssl.create_default_context(cafile=cfg['ca'])
         except (OSError, ssl.SSLError) as exc:
-            raise RuntimeError(f"Cannot load the pve2 CA file: {type(exc).__name__}") from None
+            raise RuntimeError(f"Cannot load the Proxmox CA file: {type(exc).__name__}") from None
         async with httpx.AsyncClient(verify=tls, timeout=30) as client:
             step = 'rollback'
             try:

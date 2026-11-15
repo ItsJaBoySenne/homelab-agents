@@ -1,39 +1,48 @@
-"""SSH backend: credentials fetched from Infisical on every request; no key exposure."""
-import base64, hashlib, io, json, os, socket, time, urllib.error, urllib.parse, urllib.request
+"""SSH backend: credentials fetched from the secret store on every request; no key exposure.
+
+Servers and services come from the inventory (config/inventory.yaml, gateway/inventory.py); secrets from the secret store
+(gateway/secret_store.py: the local encrypted file by default, or Infisical)."""
+import base64, hashlib, io, os, socket, sys, time
 import paramiko
 
-# Example inventory: replace the names and addresses with your own servers (name -> (pinned IP, Infisical folder)).
-# Several names have a role elsewhere: 'traefik' (routes), 'public-website' (websites), 'omada', 'sandbox'.
-SERVERS = {
- 'dev': ('192.168.10.104','/servers/dev'),
- 'jellyfin': ('192.168.10.101','/servers/jellyfin'),
- 'docker': ('192.168.10.102','/servers/docker'),
- 'traefik': ('192.168.30.103','/servers/traefik'),
- 'omada': ('192.168.20.101','/servers/omada'),
- 'public-website': ('192.168.30.11','/servers/public-website'),
- 'db-01': ('192.168.10.107','/servers/db-01'),
- 'fs-01': ('192.168.10.108','/servers/fs-01'),
- 'sandbox': ('192.168.40.204','/servers/sandbox'),  # sandbox VM on an isolated VLAN, resettable
-}
+from . import inventory as _inventory
+from . import secret_store
 
-# HLA_HA_V1: HTTP services reached by the gateway with a token from Infisical (gateway/homeassistant.py).
-# name -> (pinned base URL, Infisical folder holding HA_URL and HA_TOKEN in the same project as the servers)
-SERVICES = {
- 'homeassistant': ('http://192.168.10.100:8123','/HomeAssistant'),
- # HLA_SECRETS_V1: the Agent Generated Infisical project (INFISICAL_GENERATED_PROJECT_ID), see gateway/agent_secrets.py.
- 'secrets': (None,None),
- # HLA_GITHUB_V1: pull requests on allowlisted repos; token from GITHUB_TOKEN or Infisical, see gateway/github.py.
- 'github': ('https://api.github.com',None),
+try:
+ INVENTORY=_inventory.load()
+except _inventory.InventoryError as exc:
+ # The gateway refuses to start on a broken inventory rather than guessing: the message names the entry and the problem.
+ print('INVENTORY ERROR: '+str(exc),file=sys.stderr)
+ raise SystemExit(2)
+
+# name -> (pinned host, secret folder). Several servers have a role elsewhere: the sandbox (sandbox: true), the website
+# server (role: website) and the Traefik host (role: traefik); see SANDBOX, WEBSITE_SERVER and TRAEFIK_SERVER.
+SERVERS={s['name']:(s['host'],s['secret_path']) for s in INVENTORY['servers']}
+# name -> {user, port, description, sandbox, role, default_level, host_fingerprint, vmid} from the inventory.
+SERVER_INFO={s['name']:s for s in INVENTORY['servers']}
+SANDBOX=_inventory.sandbox(INVENTORY)
+WEBSITE_SERVER=_inventory.role(INVENTORY,'website')
+TRAEFIK_SERVER=_inventory.role(INVENTORY,'traefik')
+PUBLIC_IPS=list(INVENTORY['public_ips'])
+
+def _services(inv):
+ """Gateway services: name -> (pinned address/URL, secret folder). Integrations left out of the inventory do not exist."""
+ svc,cfg={},inv['services']
+ # HLA_HA_V1: Home Assistant with HA_TOKEN from the secret store (gateway/homeassistant.py).
+ if 'homeassistant' in cfg:svc['homeassistant']=(cfg['homeassistant']['url'],cfg['homeassistant']['secret_path'])
+ # HLA_SECRETS_V1: the generated namespace of the secret store, see gateway/agent_secrets.py.
+ svc['secrets']=(None,None)
+ # HLA_GITHUB_V1: pull requests on allowlisted repos; token from the credential store, GITHUB_TOKEN or the secret store.
+ if 'github' in cfg:svc['github']=(cfg['github']['api_url'],cfg['github']['secret_path'])
  # HLA_HTTP_TOOLS_V1: HTTP API tools defined on the dashboard; each has its own fixed host, see gateway/http_tools.py.
- 'http_tools': (None,None),
- # HLA_PROXMOX_V1: the Proxmox VE API of each node; NODE_IP must equal the pinned address, token from Infisical,
- # TLS checked against the node's CA (gateway/proxmox.py). Seeded at level 0 (off).
- 'proxmox:proxmox': ('192.168.20.30','/Proxmox/Node_1'),
- 'proxmox:pve2': ('192.168.20.31','/Proxmox/Node_2'),
- # HLA_OMADA_V1: the Omada controller's Open API (client-credentials app in /Omada: APPLICATION_NAME, CLIENT_ID,
- # CLIENT_SECRET); certificate pinned or checked against certs/omada-ca.pem (gateway/omada.py). Seeded at level 0 (off).
- 'omada:controller': ('https://192.168.20.101:8043','/Omada'),
-}
+ svc['http_tools']=(None,None)
+ # HLA_PROXMOX_V1: the Proxmox VE API of each node (gateway/proxmox.py), TOKEN_ID/TOKEN_SECRET in the secret store.
+ for node in (cfg.get('proxmox') or {}).get('nodes',[]):svc['proxmox:'+node['name']]=(node['host'],node['secret_path'])
+ # HLA_OMADA_V1: the Omada controller's Open API (CLIENT_ID, CLIENT_SECRET, APPLICATION_NAME in the secret store).
+ if 'omada' in cfg:svc['omada:controller']=(cfg['omada']['url'],cfg['omada']['secret_path'])
+ return svc
+
+SERVICES=_services(INVENTORY)
 
 # HLA_PROXMOX_V1: servers created by the gateway on Proxmox (gateway/proxmox.py), table servers_dynamic. They are added to
 # SERVERS (host, 'dynamic:<name>') whenever the database is opened (load_dynamic); their SSH key lives in the credential store
@@ -73,41 +82,25 @@ def env(name):
  if not v: raise RuntimeError('Missing environment variable '+name)
  return v
 
-def api(base,path,payload=None,token=None):
- data=json.dumps(payload).encode() if payload is not None else None
- headers={'Content-Type':'application/json'}
- if token: headers['Authorization']='Bearer '+token
- req=urllib.request.Request(base+path,data=data,headers=headers,method='POST' if data is not None else 'GET')
- with urllib.request.urlopen(req,timeout=12) as resp: return json.load(resp)
-
-def infisical_secrets(path,names):
- """Read the named secrets from one folder of the gateway's Infisical project (fresh login per request)."""
- base=env('INFISICAL_URL').rstrip('/')
- if not base.startswith('https://'): raise RuntimeError('Infisical HTTPS required')
- token=api(base,'/api/v1/auth/universal-auth/login',{'clientId':env('INFISICAL_CLIENT_ID'),'clientSecret':env('INFISICAL_CLIENT_SECRET')})['accessToken']
- query=urllib.parse.urlencode({'projectId':env('INFISICAL_PROJECT_ID'),'environment':os.getenv('INFISICAL_ENV','prod'),'secretPath':path})
- return {name:api(base,'/api/v4/secrets/'+name+'?'+query,token=token)['secret']['secretValue'] for name in names}
+def platform_secrets(path,names,optional=()):
+ """Read the named secrets from one folder of the platform namespace of the secret store (gateway/secret_store.py)."""
+ return secret_store.platform_secrets(path,names,optional)
 
 def credentials(server):
+ """SSH_PRIVATE_KEY (required), SSH_HOST_FINGERPRINT (from the inventory or the store), SSH_KEY_PASSPHRASE (optional).
+ SSH_HOST and SSH_USER, when an older secret folder still has them, must match the inventory."""
  if server not in SERVERS: raise ValueError('Unknown server')
  if server in DYNAMIC: return dynamic_credentials(server)
  expected_ip,path=SERVERS[server]
- base=env('INFISICAL_URL').rstrip('/')
- if not base.startswith('https://'): raise RuntimeError('Infisical HTTPS required')
- auth=api(base,'/api/v1/auth/universal-auth/login',{'clientId':env('INFISICAL_CLIENT_ID'),'clientSecret':env('INFISICAL_CLIENT_SECRET')})
- token=auth['accessToken']
- query=urllib.parse.urlencode({'projectId':env('INFISICAL_PROJECT_ID'),'environment':os.getenv('INFISICAL_ENV','prod'),'secretPath':path})
- values={}
- for name in ('SSH_HOST','SSH_USER','SSH_PRIVATE_KEY','SSH_HOST_FINGERPRINT'):
-  result=api(base,'/api/v4/secrets/'+name+'?'+query,token=token)
-  values[name]=result['secret']['secretValue']
- try:
-  result=api(base,'/api/v4/secrets/SSH_KEY_PASSPHRASE?'+query,token=token)
-  values['SSH_KEY_PASSPHRASE']=result['secret']['secretValue']
- except urllib.error.HTTPError as exc:
-  if exc.code != 404: raise
-  values['SSH_KEY_PASSPHRASE']=''
- if values['SSH_HOST'].strip()!=expected_ip or values['SSH_USER'].strip()!='svc-hla-agent':
+ info=SERVER_INFO[server]
+ pinned=info['host_fingerprint']
+ values=platform_secrets(path,('SSH_PRIVATE_KEY',),('SSH_KEY_PASSPHRASE','SSH_HOST','SSH_USER')+(() if pinned else ('SSH_HOST_FINGERPRINT',)))
+ if pinned:values['SSH_HOST_FINGERPRINT']=' '.join(pinned)
+ elif not values.get('SSH_HOST_FINGERPRINT','').strip():
+  raise RuntimeError('No pinned host key for '+server+': set host_fingerprint in the inventory or run '
+                     '"python -m gateway.cli secrets pin-host-key '+server+'"')
+ values.setdefault('SSH_KEY_PASSPHRASE','')
+ if values.setdefault('SSH_HOST',expected_ip).strip()!=expected_ip or values.setdefault('SSH_USER',info['user']).strip()!=info['user']:
   raise RuntimeError('Credential target does not match pinned server map')
  if 'BEGIN OPENSSH PRIVATE KEY' not in values['SSH_PRIVATE_KEY']:
   raise RuntimeError('Invalid private SSH key')
@@ -119,7 +112,9 @@ def execute(server,command,timeout=30,max_output=12000,stdin=None):
  if not command or len(command)>2048 or '\x00' in command: raise ValueError('Invalid command')
  creds=credentials(server)
  key=paramiko.Ed25519Key.from_private_key(io.StringIO(creds['SSH_PRIVATE_KEY']),password=creds['SSH_KEY_PASSPHRASE'] or None)
- return run_ssh(SERVERS[server][0],key,creds['SSH_HOST_FINGERPRINT'].strip().split(),command,timeout,max_output,stdin)
+ info=SERVER_INFO.get(server) or {}
+ extra={k:info[k] for k,d in (('user','svc-hla-agent'),('port',22)) if info.get(k,d)!=d}  # only when not the defaults
+ return run_ssh(SERVERS[server][0],key,creds['SSH_HOST_FINGERPRINT'].strip().split(),command,timeout,max_output,stdin,**extra)
 
 def fingerprint_of(remote_key):
  return 'SHA256:'+base64.b64encode(hashlib.sha256(remote_key.asbytes()).digest()).decode().rstrip('=')
@@ -137,10 +132,10 @@ def host_fingerprint(host,port=22,timeout=8):
  finally:
   transport.close()
 
-def run_ssh(host,key,pinned,command,timeout=30,max_output=12000,stdin=None):
- """One command as svc-hla-agent on host, only if its ed25519 host key matches one of the pinned fingerprints."""
+def run_ssh(host,key,pinned,command,timeout=30,max_output=12000,stdin=None,user='svc-hla-agent',port=22):
+ """One command as user (svc-hla-agent) on host, only if its ed25519 host key matches one of the pinned fingerprints."""
  if not command or len(command)>2048 or '\x00' in command: raise ValueError('Invalid command')
- sock=socket.create_connection((host,22),timeout=8)
+ sock=socket.create_connection((host,port),timeout=8)
  transport=paramiko.Transport(sock)
  try:
   transport.get_security_options().key_types=['ssh-ed25519']  # the only host key type that is ever pinned
@@ -149,7 +144,7 @@ def run_ssh(host,key,pinned,command,timeout=30,max_output=12000,stdin=None):
   fingerprint=fingerprint_of(remote_key)
   if remote_key.get_name()!='ssh-ed25519' or not pinned or fingerprint not in pinned:
    raise RuntimeError('SSH host fingerprint mismatch')
-  transport.auth_publickey('svc-hla-agent',key)
+  transport.auth_publickey(user,key)
   if not transport.is_authenticated(): raise RuntimeError('SSH authentication failed')
   channel=transport.open_session(timeout=8)
   deadline=time.monotonic()+min(max(int(timeout),1),300)

@@ -6,6 +6,8 @@ and a fake Traefik API "loads" the managed file (parsed like the file provider w
 
 python3 tests/test_routes.py   (needs paramiko importable; nothing is executed remotely)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import base64
 import hashlib
 import json

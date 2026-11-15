@@ -9,6 +9,8 @@ paramiko); the gateway's real TLS code connects to it, only the address is redir
 
 python3 tests/test_omada.py   (needs paramiko importable; no network)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import base64
 import datetime
 import json
@@ -143,7 +145,7 @@ CERT2, KEY2, FP2 = make_cert('two')
 ctrl = serve(CERT1, KEY1)
 TARGET = {'port': ctrl.server_address[1]}
 O._address = lambda host, port: (('127.0.0.1', TARGET['port']) if host == O.HOST and port == 8043 else (host, port))
-O._secrets = lambda folder, names: {'APPLICATION_NAME': 'hla-agents', 'CLIENT_ID': 'omada-client-id', 'CLIENT_SECRET': SECRET} if folder == '/Omada' else {}
+O._secrets = lambda folder, names, optional=(): {'APPLICATION_NAME': 'hla-agents', 'CLIENT_ID': 'omada-client-id', 'CLIENT_SECRET': SECRET} if folder == '/Omada' else {}
 
 # ── the gateway API ──────────────────────────────────────────────────────────────────────────────────────────────────
 api_server = ThreadingHTTPServer(('127.0.0.1', 0), srv.Handler)
@@ -303,7 +305,7 @@ check(agent({'operation': 'sites'})[0] == 200, 'OMADA_URL may restate the pinned
 os.environ.pop('OMADA_URL')
 
 # ── secrets ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-O._secrets = lambda folder, names: (_ for _ in ()).throw(RuntimeError('Infisical down'))
+O._secrets = lambda folder, names, optional=(): (_ for _ in ()).throw(RuntimeError('secret store down'))
 O.forget()
 code, body = admin({'operation': 'status'})
 check(body['error'] == 'omada_not_configured' and 'RuntimeError' in body['detail'] and not body['configured'], 'status: Infisical unreadable is reported')

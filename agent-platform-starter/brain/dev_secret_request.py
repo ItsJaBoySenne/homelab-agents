@@ -1,7 +1,7 @@
 """Strict single-purpose request for creating a development secret.
 
 This is a trusted backend workflow, not a general model risk bypass.
-The input never supplies a secret value, Infisical path, or project id.
+The input never supplies a secret value or where it is stored.
 """
 import re
 

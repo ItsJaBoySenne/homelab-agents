@@ -1,8 +1,8 @@
 # Homelab Agents SSH Fleet Bootstrap
 
 Prepares a Linux VM for `../ssh-gateway`: a locked `svc-hla-agent` account with one Ed25519 key that only
-works from the gateway VM's address. After installing, store the key and the host fingerprint in Infisical under
-`/servers/<name>` and add the server to `SERVERS` in `ssh-gateway/gateway/core.py`.
+works from the gateway VM's address. After installing, add the server to `config/inventory.yaml` and store the key and the host fingerprint in the
+gateway's secret store (`servers/<name>/...`, section 4).
 
 ## Safety before deployment
 
@@ -75,27 +75,29 @@ ssh -i ~/.ssh/hla-fleet/server1 -o IdentitiesOnly=yes -o BatchMode=yes svc-hla-a
 You can later run `bash 03-verify-from-agents.sh hosts.txt` (one `<name> <address>` per line, e.g. `server1 192.168.1.21`)
 once each target SSH host key is pinned in the local known_hosts. `03-verify...` does not disable host-key verification.
 
-## 4. Import into Infisical
+## 4. Store the key in the gateway's secret store
 
-In **Agent Platform**, environment `prod`, create exactly one secrets folder per server, e.g. `/servers/server1`, `/servers/server2`, etc.
-
-Inside each folder create:
-
-- `SSH_HOST`: the server's IP address
-- `SSH_USER`: `svc-hla-agent`
-- `SSH_PRIVATE_KEY`: the *entire* content of that server's private file (WITHOUT `.pub`) from `~/.ssh/hla-fleet/<name>`, including BEGIN/END OpenSSH lines and embedded newlines
-- `SSH_HOST_FINGERPRINT`: ED25519 SHA256 host fingerprint verified from *target console*
-- `SSH_KEY_PASSPHRASE`: optional; leave it out for keys from this kit (the gateway tolerates it missing).
-
-To retrieve the private key for a secure, isolated Infisical secret entry (not in chat or shell history):
+Add the server to `config/inventory.yaml` first (step 5), then, on the gateway host (the key is piped, never on the
+command line, and the CLI never prints it):
 
 ```bash
-cat ~/.ssh/hla-fleet/server1
+cd ssh-gateway
+sudo ./dc exec -T ssh-gateway-api python -m gateway.cli secrets import-ssh-key server1 /dev/stdin < ~/.ssh/hla-fleet/server1
+# pin the host key: either the fingerprint you verified on the target console ...
+sudo ./dc exec -T ssh-gateway-api python -m gateway.cli secrets set servers/server1/SSH_HOST_FINGERPRINT <<< 'SHA256:...'
+# ... or record it on first contact and compare what it prints with the console
+sudo ./dc exec -T ssh-gateway-api python -m gateway.cli secrets pin-host-key server1
 ```
 
-Prefer using Infisical's supported secret import/upload functionality where available rather than copying into a clipboard that syncs across devices. Ensure the Infisical service account can read only necessary folders, particularly not self-host secrets or production admin credentials.
+(`host_fingerprint: SHA256:...` on the server in the inventory works too.) Keys from this kit have no passphrase; a
+passphrase-protected key also needs `servers/<name>/SSH_KEY_PASSPHRASE`.
+
+With `HLA_SECRETS_BACKEND=infisical` the same names are Infisical folders: `/servers/<name>` with `SSH_PRIVATE_KEY`
+(the whole private file including BEGIN/END lines), `SSH_HOST_FINGERPRINT` and optionally `SSH_KEY_PASSPHRASE`; give the
+gateway's machine identity read access to only those folders.
 
 ## 5. Add the server to the gateway
 
-Add `'<name>': ('<ip>', '/servers/<name>')` to `SERVERS` in `../ssh-gateway/gateway/core.py`, redeploy the
-gateway API, and set the server's level on the dashboard's Policy page (new servers start at level 1).
+Add `- {name: <name>, host: <ip>, description: "..."}` under `servers:` in `config/inventory.yaml` (see
+`config/inventory.example.yaml`; `user`/`port` if they differ from svc-hla-agent/22), restart the gateway API and the
+agent platform, and set the server's level on the dashboard's Policy page (new servers start at level 1).

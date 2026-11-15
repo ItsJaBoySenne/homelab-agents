@@ -1666,14 +1666,21 @@ document.querySelector('button[data-view="threads"]').addEventListener('click',a
 
 // HLA_POLICY_V1: per-agent and per-server levels, and unhinged mode. The SSH gateway enforces them.
 // What each level means for a service (servers use the shared legend).
+// HLA_SECRET_STORE_V1: where the gateway keeps secrets. Neutral wording unless the gateway says Infisical is the backend
+// (policy and connections carry secret_store {backend, configured}).
+let SECRET_BACKEND=null;
+function noteSecretBackend(store){if(store&&store.backend){SECRET_BACKEND=store.backend;document.querySelectorAll('.secret-store-name').forEach(n=>n.textContent=secretStoreName())}}
+function secretStoreName(){return SECRET_BACKEND==='infisical'?'Infisical':'the secret store'}
+function generatedStoreName(){return SECRET_BACKEND==='infisical'?'the Agent Generated project in Infisical':'the generated secrets of the gateway\'s secret store'}
 const SERVICE_LEVELS={homeassistant:'1 read states and dashboards · 4 call services, save dashboards (backed up first) · 6 anything',
- secrets:'Agent Generated project in Infisical. 1 list names and use {{secret:NAME}} in commands and files · 4 create new passwords · 6 replace existing ones. Agents never see the values.',
+ get secrets(){return 'Generated secrets ('+generatedStoreName()+'). 1 list names and use {{secret:NAME}} in commands and files · 4 create new passwords · 6 replace existing ones. Agents never see the values.'},
  github:'Pull requests on the allowed repositories below. 1 read PR status · 4 open PRs and comment · 6 merge (or 4 where merges are allowed). The token stays in the gateway.',
  mcp:'MCP server (MCP page). Tools need 4 by default, 6 when marked destructive; new tools wait for your review; per-tool levels on the MCP page. Results are untrusted data.'};
 let policyData=null;
 async function loadPolicy(){
  const keep=policyDirty();
  policyData=await api('policy');
+ noteSecretBackend(policyData?.policy?.secret_store);
  if(!keep)renderPolicy();  // re-rendering would silently discard unsaved edits
  renderUnhinged();renderDeployApps();markPolicyDirty();loadSandbox().catch(()=>{});loadDeployments().catch(e=>notice(e.message));
 }
@@ -1777,7 +1784,7 @@ document.querySelector('button[data-view="policy"]').addEventListener('click',()
 // HLA_SANDBOX_V1: roll the sandbox VM back to its clean snapshot.
 async function loadSandbox(){
  const s=await api('sandbox'),canEdit=policyData?.approver?.allowed!==false;
- $('sandbox-desc').textContent=`sandbox-vm · ${s.host} · VM ${s.vmid} on ${s.node}. Agents at level 6 get a free shell there; Reset rolls it back to the "${s.snapshot}" snapshot.`;
+ $('sandbox-desc').textContent=`${s.name||'sandbox'} · ${s.host||'?'} · VM ${s.vmid||'?'} on ${s.node||'?'}. Agents at level 6 get a free shell there; Reset rolls it back to the "${s.snapshot}" snapshot.`;
  const last=s.last_reset;
  $('sandbox-status').textContent=!s.configured?'Reset not available yet: missing '+s.missing.join(', ')+'.':
   s.resetting?'Resetting…':last?`Last reset ${new Date(last.started_at).toLocaleString()} by ${last.actor}: ${last.outcome==='ok'?'done':last.outcome||'in progress'}.`:'Not reset yet.';
@@ -1819,7 +1826,7 @@ function renderDeployApps(){
   box.append(row);
  }
  const sel=$('dep-server');
- if(!sel.options.length)for(const s of Object.keys(policyData.policy.servers))if(s!=='sandbox')sel.add(new Option(s,s));
+ if(!sel.options.length)for(const s of Object.keys(policyData.policy.servers))if(s!==(policyData.policy.roles?.sandbox??'sandbox'))sel.add(new Option(s,s));
 }
 const deploying=new Set();  // apps with a deployment in flight (from this page or the gateway history)
 async function startDeploy(a,sha){
@@ -2714,7 +2721,7 @@ function renderGithubRepos(){
  const canEdit=policyData.editable&&policyData.approver.allowed,repos=policyData.policy.github?.repos||{};
  panel.replaceChildren();
  const head=el('div','panel-heading'),txt=el('div');
- txt.append(el('h2',null,'GitHub repositories'),el('p','muted','Agents can open and read pull requests only in these repositories (service github on the left sets their level). Merging needs level 6 or unhinged mode, unless you allow it for a repository. The token stays in the gateway (GITHUB_TOKEN, or Infisical /GitHub).'));
+ txt.append(el('h2',null,'GitHub repositories'),el('p','muted','Agents can open and read pull requests only in these repositories (service github on the left sets their level). Merging needs level 6 or unhinged mode, unless you allow it for a repository. The token stays in the gateway (Connections page, GITHUB_TOKEN, or GitHub/GITHUB_TOKEN in '+secretStoreName()+').'));
  // HLA_CONNECTIONS_V1: the token, its status and a picker of the repositories it reaches live on the Connections page.
  const toConn=el('a','conn-link','Token, connection test and repository picker: Connections →');toConn.href='#';toConn.id='github-to-connections';
  toConn.onclick=e=>{e.preventDefault();openView('connections')};txt.append(toConn);
@@ -2747,12 +2754,13 @@ VIEW_TITLES.connections='Connections';
 SERVICE_LEVELS.http_tools='HTTP tools from the Connections page: an agent gets every tool whose own level it reaches (default 1 for GET, 4 for writes; tools marked "only level 6" need 6 or unhinged mode).';
 let connData=null,credData=null,ghStatus=null,ghRepos=null,htData=null,htEditing=null;
 const CRED_KINDS={token:'Token',api_key:'API key',password:'Password',header:'Header value',other:'Other'};
-const GH_SOURCES={store:'the credential store (this page)',env:'.env.gateway (GITHUB_TOKEN)',infisical:'Infisical (/GitHub)'};
+const GH_SOURCES={store:'the credential store (this page)',env:'.env.gateway (GITHUB_TOKEN)',infisical:'Infisical (/GitHub)',
+ get secret_store(){return (SECRET_BACKEND==='infisical'?'Infisical':'the secret store')+' (GitHub/GITHUB_TOKEN)'}};
 function connCanEdit(){return !!(connData&&connData.editable&&connData.approver?.allowed)}
 function connWhen(ts){return ts?when(new Date(ts*1000)):'—'}
 async function loadConnections(){
  const [c,cr,ht]=await Promise.all([api('connections'),api('credentials'),api('http-tools')]);
- connData=c;credData=cr;htData=ht;
+ connData=c;credData=cr;htData=ht;noteSecretBackend(c?.secret_store);
  if(!policyData)await loadPolicy().catch(()=>{});
  renderConnNote();renderCredentials();renderHttpTools();renderGithubLevel();
  await loadGithubStatus().catch(e=>{ghStatus={configured:null,ok:false,detail:e.message};renderGithubStatus()});
@@ -2823,7 +2831,7 @@ function renderGithubStatus(){
  if(s.source)facts.push('Token from '+(GH_SOURCES[s.source]||s.source)+'.');
  if(s.ok)facts.push(s.token_type==='classic'?'Classic token, scopes: '+((s.scopes||[]).join(', ')||'none')+'.':s.token_type==='fine-grained'?'Fine-grained token: access is set per repository on GitHub.':'Token type unknown.');
  if(!s.ok&&(s.detail||s.setup))facts.push(s.detail||s.setup);
- if(s.configured===false)facts.push('Add a token below (or GITHUB_TOKEN in .env.gateway / Infisical /GitHub).');
+ if(s.configured===false)facts.push('Add a token below (or GITHUB_TOKEN in .env.gateway / GitHub/GITHUB_TOKEN in '+secretStoreName()+').');
  if(facts.length)box.append(el('p','muted',facts.join(' ')));
  $('gh-token-summary').textContent=s.source==='store'?'Replace the GitHub token':'Set the GitHub token';
 }
@@ -3183,7 +3191,7 @@ function renderMcp(){
  const d=mcpData,box=$('mcp-servers'),notes=[];box.replaceChildren();
  if(!d.available)notes.push(d.note);
  else if(!d.editable)notes.push(d.approver?.reason||'Read-only.');
- if(d.available&&d.credentials_configured===false)notes.push('The gateway credential store is off (GATEWAY_CREDENTIAL_KEY): only servers without auth work.');
+ if(d.available&&d.credentials_configured===false)notes.push('The gateway credential store is off (HLA_SECRETS_KEY or GATEWAY_CREDENTIAL_KEY): only servers without auth work.');
  $('mcp-note').hidden=!notes.length;$('mcp-note').textContent=notes.join(' ');
  $('mcp-add').disabled=!mcpCanEdit();
  if(d.available&&!d.servers.length)box.append(el('p','muted','No MCP servers yet. Add one with its URL; agents get its tools once you raise its level.'));
@@ -3667,7 +3675,7 @@ function rtRow(r,canEdit){
  const tags=el('div','ws-tags');tags.append(el('span','pill ws-env ws-env-'+r.environment,r.environment==='production'?'Production':'Staging'));
  if(r.status!=='active')tags.append(el('span','badge','switched off'));a.append(tags);
  const p=el('div','rt-cell');p.dataset.label='Protection';p.append(el('span','badge'+(r.protection==='public'?'':' badge-run'),RT_PROTECTION[r.protection]||r.protection));
- if(r.basic_user)p.append(el('div','fineprint rt-cred','user '+r.basic_user+' · password in Infisical (Agent Generated): '+r.basic_secret));
+ if(r.basic_user)p.append(el('div','fineprint rt-cred','user '+r.basic_user+' · password in '+generatedStoreName()+': '+r.basic_secret));
  const b=el('div','rt-cell');b.dataset.label='Backend';b.append(el('code',null,r.backend));
  const owner=rtSiteOfPort(r.backend_port);b.append(el('div','fineprint',owner?owner.container.name+' ('+owner.container.state+')':'no container publishes this port'));
  const dn=el('div','rt-cell');dn.dataset.label='DNS';dn.append(rtDnsEl(r.dns));
@@ -3737,7 +3745,7 @@ function rtOpenForm(spec){
  env.value=r.environment||pre.environment||'production';envL.append(env);
  const protL=el('label',null,'Protection');const prot=el('select');prot.id='rt-protection';for(const [v,l] of Object.entries(RT_PROTECTION))prot.add(new Option(l,v));
  prot.value=r.protection||pre.protection||RT_DEFAULT[env.value];protL.append(prot);const protHint=el('span','fineprint');protL.append(protHint);
- const userL=el('label',null,'Login user');const user=el('input');user.id='rt-user';user.maxLength=32;user.value=r.basic_user||'hla';userL.append(user,el('span','fineprint','The password is generated in Infisical (Agent Generated) as TRAEFIK_BASIC_<ROUTE>; read it there.'));
+ const userL=el('label',null,'Login user');const user=el('input');user.id='rt-user';user.maxLength=32;user.value=r.basic_user||'hla';userL.append(user,el('span','fineprint','The password is generated in '+generatedStoreName()+' as TRAEFIK_BASIC_<ROUTE>; '+(SECRET_BACKEND==='infisical'?'read it there.':'export it with the gateway CLI: secrets export TRAEFIK_BASIC_<ROUTE> --generated --out FILE.')));
  const beL=el('label',null,'Backend on public-website');const be=el('select');be.id='rt-backend';beL.append(be);
  const portL=el('label',null,'Port');const port=el('input');port.id='rt-port';port.type='number';port.min=1;port.max=65535;port.placeholder='e.g. 8085';portL.append(port);
  const pathL=el('label',null,'Path prefix (optional)');const path=el('input');path.id='rt-path';path.maxLength=100;path.placeholder='/';path.value=r.path_prefix||'';pathL.append(path);
@@ -3778,7 +3786,7 @@ function rtOpenForm(spec){
   if(pre.project_id||r.project_id)body.project_id=pre.project_id||r.project_id;
   whileBusy(save,async()=>{save.textContent='Saving… (waiting for Traefik)';
    try{const out=await api('routes/'+encodeURIComponent(name),{method:'PUT',headers:UI_HEADERS,body:JSON.stringify(body)});
-    notice('Route saved: https://'+h+'/ is live on Traefik.'+(out.route?.basic_user?' Password: '+out.route.basic_secret+' in Infisical.':''));rtOpenForm(null);await loadRoutes();rtWsLoad().then(renderRoutes).catch(()=>{})}
+    notice('Route saved: https://'+h+'/ is live on Traefik.'+(out.route?.basic_user?' Password: '+out.route.basic_secret+' in '+secretStoreName()+'.':''));rtOpenForm(null);await loadRoutes();rtWsLoad().then(renderRoutes).catch(()=>{})}
    catch(ex){err.hidden=false;err.textContent=ex.message}finally{save.textContent='Save route'}})};
  sync();if(sub.value||dom.value)checkDns();
  box.scrollIntoView({block:'nearest'});(spec.mode==='edit'?prot:sub).focus();
@@ -4967,7 +4975,7 @@ let mcpOpenName=null;
 renderMcp=function(){
  const d=mcpData,box=$('mcp-servers'),notes=[];box.replaceChildren();box.className='row-list mcp-rows';
  if(!d.available)notes.push(d.note);else if(!d.editable)notes.push(d.approver?.reason||'Read-only.');
- if(d.available&&d.credentials_configured===false)notes.push('The gateway credential store is off (GATEWAY_CREDENTIAL_KEY): only servers without auth work.');
+ if(d.available&&d.credentials_configured===false)notes.push('The gateway credential store is off (HLA_SECRETS_KEY or GATEWAY_CREDENTIAL_KEY): only servers without auth work.');
  $('mcp-note').hidden=!notes.length;$('mcp-note').textContent=notes.join(' ');$('mcp-add').disabled=!mcpCanEdit();
  if(d.available&&!d.servers.length){const e=el('div','empty-state');e.append(el('strong',null,'No MCP servers yet'),el('span',null,'Add one with its URL; agents get its tools once you raise its level.'));box.append(e)}
  for(const s of d.servers){

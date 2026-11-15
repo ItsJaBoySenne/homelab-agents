@@ -49,6 +49,6 @@ if [[ "$MODE" == '--admin' ]]; then
 else
   echo 'No sudo privileges granted by this script; use --admin only after risk review.'
 fi
-printf '\nHost ED25519 fingerprint (verify before trusting in Infisical):\n'
+printf '\nHost ED25519 fingerprint (verify before pinning it in the gateway: secrets pin-host-key / SSH_HOST_FINGERPRINT):\n'
 ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
 printf '\nDone. Test login from %s before closing your admin session.\n' "$SOURCE_IP"

@@ -206,7 +206,7 @@ _ASSIGNED = re.compile(r'(?i)\b\w*(?:pass(?:word|wd|phrase)?|pwd|secret|token|ap
 
 def looks_secret(text):
     """True when text seems to hold a secret value (key, token, password) rather than a reference to one.
-    References stay allowed: {{secret:NAME}}, Infisical paths, $VARIABLES, <placeholders>, plain words."""
+    References stay allowed: {{secret:NAME}}, secret-store names and paths, $VARIABLES, <placeholders>, plain words."""
     text = _REF.sub('SECRETREF', text or '')
     if _SECRET_SHAPES.search(text):
         return True
@@ -214,7 +214,7 @@ def looks_secret(text):
         value = match.group(1)
         if (value.startswith(('$', '<', '{', '/', '*', '…', 'SECRETREF', '[')) or re.fullmatch(r'[A-Za-z][a-z]*\.?', value)
                 or re.fullmatch(r'[A-Z][A-Z0-9_]{2,}', value) or value.casefold() in ('none', 'null', 'redacted', 'unset', 'n/a')):
-            continue  # a placeholder, a path, a variable name or a plain word ("stored in Infisical")
+            continue  # a placeholder, a path, a variable name or a plain word ("stored in the secret store")
         return True
     for token in re.findall(r'[A-Za-z0-9+/_=-]{32,}', text):
         # Long random-looking strings (mixed case and digits); hex hashes, commit ids and slugs are fine. Paths and
@@ -241,7 +241,7 @@ def save_note(db, workspace, title, text, *, scope='workspace', project_id=None,
         return {'error': 'no_project', 'detail': 'This run is not part of a project; use scope workspace.'}
     if looks_secret(title + '\n' + text):
         return {'error': 'looks_like_a_secret', 'detail': ('Knowledge holds references only: write where a credential is stored '
-                '(Infisical path, {{secret:NAME}}, env variable name), never a password, token or key value. Nothing was saved.')}
+                '(its name in the secret store, {{secret:NAME}}, env variable name), never a password, token or key value. Nothing was saved.')}
     pid = project_id if scope == 'project' else None
     agent = db.execute('SELECT name FROM agents WHERE id=%s', (agent_id,)).fetchone() if agent_id else None
     author = (agent or {}).get('name') or 'agent'

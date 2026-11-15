@@ -1,4 +1,6 @@
 """End-to-end test of in-thread approvals against a throwaway Postgres, with TypeSafe/OpenRouter mocked."""
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import asyncio
 import json
 from pathlib import Path

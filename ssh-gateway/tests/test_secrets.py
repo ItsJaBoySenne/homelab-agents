@@ -1,7 +1,10 @@
-"""Agent secrets through the gateway API: real HTTP server and SQLite, Infisical and SSH replaced by stand-ins.
+"""Agent secrets through the gateway API with HLA_SECRETS_BACKEND=infisical: real HTTP server and SQLite, Infisical and SSH
+replaced by stand-ins (the local backend: tests/test_secret_store.py).
 
 python3 tests/test_secrets.py   (needs paramiko importable; no network)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import hashlib
 import json
 import os
@@ -18,10 +21,10 @@ TMP = tempfile.mkdtemp()
 os.environ.update({'GATEWAY_DB': TMP + '/gw.sqlite3', 'TOOL_GATEWAY_TOKEN': 't' * 40, 'POLICY_ADMIN_TOKEN': 'a' * 40,
                    'INFISICAL_URL': 'https://infisical.test', 'INFISICAL_CLIENT_ID': 'id', 'INFISICAL_CLIENT_SECRET': 'cs',
                    'INFISICAL_PROJECT_ID': 'servers-project', 'INFISICAL_ENV': 'prod',
-                   'INFISICAL_GENERATED_PROJECT_ID': 'generated-project'})
+                   'INFISICAL_GENERATED_PROJECT_ID': 'generated-project', 'HLA_SECRETS_BACKEND': 'infisical'})
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import gateway_api.server as srv  # noqa: E402
-from gateway import agent_secrets as sec  # noqa: E402
+from gateway import agent_secrets as sec, secret_store  # noqa: E402
 
 failures = []
 def check(cond, label):
@@ -49,7 +52,7 @@ def fake_call(method, base, path, payload=None, token=None):
         STORE[name] = payload['secretValue']; return 200, {}
     return 404, {}
 LOGIN = {'clientId': 'id', 'clientSecret': 'cs'}
-sec._call = fake_call
+secret_store._call = fake_call  # this suite runs the Infisical backend; tests/test_secret_store.py the local one
 
 # --- SSH stand-in: records what would run and echoes it back, like `cat .env` would ---
 RAN = []

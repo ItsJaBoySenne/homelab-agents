@@ -12,12 +12,9 @@ services:
       HLA_DEV_MAINTENANCE_RISK_EXCEPTION: ${HLA_DEV_MAINTENANCE_RISK_EXCEPTION:-false}
       HLA_DEV_SECRET_WORKFLOW: ${HLA_DEV_SECRET_WORKFLOW:-false}
       AGENT_SECRET_WRITER_ENABLED: ${AGENT_SECRET_WRITER_ENABLED:-false}
-      AGENT_SECRET_INFISICAL_URL: ${AGENT_SECRET_INFISICAL_URL:-}
-      AGENT_SECRET_PROJECT_ID: ${AGENT_SECRET_PROJECT_ID:-}
-      AGENT_SECRET_CLIENT_ID: ${AGENT_SECRET_CLIENT_ID:-}
-      AGENT_SECRET_CLIENT_SECRET: ${AGENT_SECRET_CLIENT_SECRET:-}
-      AGENT_SECRET_INFISICAL_CA: /app/infisical-ca.pem
     volumes:
+      # HLA_INVENTORY_V1: the server inventory (servers, integrations), read-only; see ../config/inventory.example.yaml.
+      - ../config/inventory.yaml:/config/inventory.yaml:ro
       # HLA_ATTACHMENTS_V1: photos, files and documents of conversations, projects and tasks (attachments.py).
       - agent_attachments:/data/attachments
       # HLA_ENGINES_V1: Claude Code / Codex sign-ins (written only by the CLIs) and their per-run directories.
@@ -62,6 +59,8 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-agents}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@database:5432/${POSTGRES_DB:-agent_platform}
+    volumes:
+      - ../config/inventory.yaml:/config/inventory.yaml:ro
     depends_on:
       database:
         condition: service_healthy

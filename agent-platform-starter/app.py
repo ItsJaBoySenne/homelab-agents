@@ -570,15 +570,15 @@ async def execute_task(task: Task, authorization: str | None, *, stream_mode=Fal
         operation = parse_request(task.task)
         if operation is not None:
             from brain.secret_writer import generate_secret
-            # The writer generates randomness and fixes project/env/path server-side.
+            # The gateway generates the value and stores it in its secret store; only the reference comes back.
             async with httpx.AsyncClient(timeout=25) as writer_client:
                 outcome = await generate_secret(writer_client, operation['name'], operation['kind'])
             successful = outcome.get('status') == 'created'
             status = 'completed' if successful else 'failed'
             # Never persist secret values or a credential-bearing API response.
             message = (
-                'Secret created in Agent Generated / prod /development: '
-                + operation['name'] + ' (' + operation['kind'] + '). Secret value not shown.'
+                'Secret created in the secret store (generated secrets): '
+                + operation['name'] + ' (' + operation['kind'] + '), use it as {{secret:' + operation['name'] + '}}. Secret value not shown.'
                 if successful else
                 'Secret creation failed for ' + operation['name']
                 + ' (stage: ' + str(outcome.get('stage',outcome.get('reason','unknown')))

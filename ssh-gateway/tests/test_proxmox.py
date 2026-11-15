@@ -8,6 +8,8 @@ runs against a local HTTPS server with a throwaway CA made by openssl (skipped w
 
 python3 tests/test_proxmox.py   (needs paramiko importable; no network)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import base64
 import inspect
 import json
@@ -35,13 +37,14 @@ for name in ('proxmox-ca.pem', 'pve2-ca.pem'):
 os.environ.update({'GATEWAY_DB': TMP + '/gw.sqlite3', 'TOOL_GATEWAY_TOKEN': 't' * 40, 'POLICY_ADMIN_TOKEN': 'a' * 40,
                    'GATEWAY_CREDENTIAL_KEY': base64.b64encode(os.urandom(32)).decode(), 'PROXMOX_CA_DIR': CA_DIR,
                    'INFISICAL_URL': 'https://infisical.test', 'INFISICAL_CLIENT_ID': 'id', 'INFISICAL_CLIENT_SECRET': 'cs',
-                   'INFISICAL_PROJECT_ID': 'servers-project', 'INFISICAL_GENERATED_PROJECT_ID': 'generated-project'})
+                   'INFISICAL_PROJECT_ID': 'servers-project', 'INFISICAL_GENERATED_PROJECT_ID': 'generated-project',
+                   'HLA_SECRETS_BACKEND': 'infisical'})
 for k in ('PROXMOX_ALLOWED_NETS', 'PROXMOX_PROTECTED_NAMES', 'GITHUB_TOKEN'):
     os.environ.pop(k, None)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import fake_pve  # noqa: E402
-from gateway import proxmox as P, core, policy, credentials as creds, agent_secrets as sec  # noqa: E402
+from gateway import proxmox as P, core, policy, credentials as creds, agent_secrets as sec, secret_store  # noqa: E402
 from gateway.cli import db_open  # noqa: E402
 import gateway_api.server as srv  # noqa: E402
 
@@ -87,7 +90,7 @@ def fake_call(method, base, path, payload=None, token=None):
         return 200, {'secrets': [{'secretKey': k, 'secretValue': v, 'secretComment': ''} for k, v in STORE.items()]}
     STORE[path.rsplit('/', 1)[1]] = payload['secretValue']
     return 200, {}
-sec._call = fake_call
+secret_store._call = fake_call
 
 httpd = ThreadingHTTPServer(('127.0.0.1', 0), srv.Handler)
 threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -357,7 +360,7 @@ levels(5, monitoring=1)
 code, body = call('POST', '/v1/execute', {'agent_id': AGENT, 'server': 'monitoring', 'mode': 'diagnostic', 'diagnostic': 'identity'}, token='t' * 40)
 check(code == 200 and RAN and RAN[-1][:3] == ('192.168.10.205', key.get_base64(), [SSH['fp']]), 'dynamic server: execute uses its stored key and pinned fingerprint')
 core.run_ssh = real_run
-check(core.SERVERS['dev'] == ('192.168.10.104', '/servers/dev') and core.credentials.__name__ == 'credentials', 'static servers keep their Infisical profile')
+check(core.SERVERS['dev'] == ('192.168.10.104', '/servers/dev') and core.credentials.__name__ == 'credentials', 'static servers keep their secret-store folder')
 with db_open() as db:
     try:
         P.register(db, 'dev', '192.168.10.250', 'SSH_KEY_DEV', 'SHA256:x', 'pve2', 250, 'x'); took = True
@@ -511,14 +514,17 @@ os.environ['PROXMOX_CA_PVE2'] = TMP + '/missing.pem'
 check(admin({'node': 'pve2', 'operation': 'inventory'})[1]['nodes'][0]['error'] == 'proxmox_ca_missing', 'config: a missing CA file is a clear error')
 os.environ.pop('PROXMOX_CA_PVE2')
 P.forget()
-P._secrets = lambda folder, names: (_ for _ in ()).throw(RuntimeError('Missing environment variable INFISICAL_URL'))
-check(admin({'node': 'pve2', 'operation': 'inventory'})[1]['nodes'][0]['error'] == 'proxmox_not_configured', 'config: Infisical unreadable -> not configured')
+P._secrets = lambda folder, names, optional=(): (_ for _ in ()).throw(RuntimeError('Missing environment variable INFISICAL_URL'))
+check(admin({'node': 'pve2', 'operation': 'inventory'})[1]['nodes'][0]['error'] == 'proxmox_not_configured', 'config: secret store unreadable -> not configured')
 P._secrets = fake_pve.secrets
 P.forget()
 
 # ── TLS: verification is never off ───────────────────────────────────────────────────────────────────────────────────
 src = inspect.getsource(P)
-check(not re.search(r'CERT_NONE|_create_unverified_context|check_hostname\s*=\s*False|verify\s*=\s*False', src), 'TLS: no code path turns verification off')
+unverified = inspect.getsource(P._unverified_context)
+check(not re.search(r'CERT_NONE|_create_unverified_context|check_hostname\s*=\s*False|verify\s*=\s*False', src.replace(unverified, ''))
+      and src.count('return _unverified_context()') == 1 and 'if not VERIFY_TLS:\n        return _unverified_context()' in src,
+      'TLS: only verify_tls: false in the inventory turns verification off')
 if shutil.which('openssl'):
     d = TMP + '/tls'
     os.makedirs(d)

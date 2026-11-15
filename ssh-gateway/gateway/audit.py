@@ -221,8 +221,8 @@ def facets(db, days=180):
 
 
 def known_secrets(agent_secrets, extra_values=()):
-    """(value, name) pairs to replace: the Agent Generated secrets (cached by agent_secrets) and the gateway's
-    own tokens. Never raises: an unreachable Infisical still leaves the pattern masking."""
+    """(value, name) pairs to replace: the generated secrets (cached by agent_secrets) and the gateway's
+    own tokens. Never raises: an unreachable secret store still leaves the pattern masking."""
     values = {}
     try:
         values.update(agent_secrets.load() if agent_secrets.configured() else {})

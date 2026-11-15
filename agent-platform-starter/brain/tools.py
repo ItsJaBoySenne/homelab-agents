@@ -10,8 +10,10 @@ import psycopg
 from psycopg.rows import dict_row
 from memory import store as memory_store
 from memory import knowledge as kb
+import inventory
 
-SERVERS = ('dev','jellyfin','docker','traefik','omada','public-website','db-01','fs-01')
+# The inventory's servers (config/inventory.yaml), except the sandbox: it is reset to a snapshot, so its state is not knowledge.
+SERVERS = tuple(s['name'] for s in inventory.current()[0]['servers'] if not s['sandbox'])
 DIAGNOSTICS = ('identity','system','nginx-status','docker-status','disk','failed-units')
 
 DEFINITIONS = [
@@ -24,8 +26,8 @@ DEFINITIONS = [
      'scope':{'type':'string','enum':['all','project','workspace']}},'required':['query'],'additionalProperties':False}}},
  {'type':'function','function':{'name':'knowledge_save',
    'description':('Save a durable note so later runs and other agents reuse it instead of re-discovering it: a decision and why, '
-     'a convention, hosts, paths, URLs, branches, ports, how something is set up, or WHERE a credential is stored (Infisical path, '
-     '{{secret:NAME}}, env variable name). Never a password, token, key or other secret value: such notes are refused. '
+     'a convention, hosts, paths, URLs, branches, ports, how something is set up, or WHERE a credential is stored (its name in the '
+     'secret store, {{secret:NAME}}, env variable name). Never a password, token, key or other secret value: such notes are refused. '
      'Saving again with the same title updates your earlier note. scope project (in a project task) shares it with the '
      "project's other tasks and its planner; workspace shares it with every agent. Keep it short and factual."),
    'parameters':{'type':'object','properties':{'title':{'type':'string','minLength':2,'maxLength':160},
@@ -35,6 +37,8 @@ DEFINITIONS = [
    'description':'Run a fresh fixed SSH diagnostic on an authorized server and upsert its REAL output into the shared Home Knowledge Base. This is a verified snapshot, not a claim about configuration not inspected.',
    'parameters':{'type':'object','properties':{'server':{'type':'string','enum':list(SERVERS)},'diagnostic':{'type':'string','enum':list(DIAGNOSTICS)}},'required':['server','diagnostic'],'additionalProperties':False}}}
 ]
+if not SERVERS:  # an inventory without servers: no diagnostic to save (an empty enum is not a valid schema)
+    DEFINITIONS = [d for d in DEFINITIONS if d['function']['name'] != 'knowledge_save_diagnostic']
 
 def _connect():
     return psycopg.connect(os.environ['DATABASE_URL'],row_factory=dict_row)

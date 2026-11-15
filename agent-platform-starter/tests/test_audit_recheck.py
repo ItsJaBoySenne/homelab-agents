@@ -4,6 +4,8 @@ Real app on a throwaway Postgres; the gateway's audit read runs the real ssh-gat
 in-memory SQLite, its /v1/execute is mocked. Run like test_thread_approval.py:
 TEST_DATABASE_URL=... I_UNDERSTAND_THIS_WIPES_TEST_DB=1 python tests/test_audit_recheck.py
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import asyncio
 import json
 import os

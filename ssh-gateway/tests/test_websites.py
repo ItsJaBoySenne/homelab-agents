@@ -4,6 +4,8 @@ output; the three remote scripts also run for real in bash against stand-in dock
 
 python3 tests/test_websites.py   (needs paramiko importable; nothing is executed remotely)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import json
 import os
 import sqlite3

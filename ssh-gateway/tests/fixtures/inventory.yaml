@@ -1,0 +1,22 @@
+# Test inventory: the servers and services the gateway suites (and the dashboard preview server) were written against.
+servers:
+  - {name: dev, host: 192.168.10.104, description: Development VM, default_level: 5}
+  - {name: jellyfin, host: 192.168.10.101, description: Media server}
+  - {name: docker, host: 192.168.10.102, description: Docker host}
+  - {name: traefik, host: 192.168.30.103, description: Reverse proxy, role: traefik}
+  - {name: omada, host: 192.168.20.101, description: Omada controller VM}
+  - {name: public-website, host: 192.168.30.11, description: Public websites, role: website}
+  - {name: db-01, host: 192.168.10.107, description: Databases}
+  - {name: fs-01, host: 192.168.10.108, description: File server}
+  - {name: sandbox, host: 192.168.40.204, description: Disposable sandbox VM, sandbox: true, vmid: 204, node: pve2}
+services:
+  homeassistant: {url: "http://192.168.10.100:8123"}
+  github: {}
+  proxmox:
+    nodes:
+      - {name: proxmox, url: "https://192.168.20.30:8006", tls_name: proxmox.home.arpa, label: Node 1, secret_path: /Proxmox/Node_1}
+      - {name: pve2, url: "https://192.168.20.31:8006", tls_name: pve2.example.com, label: Node 2, secret_path: /Proxmox/Node_2}
+    reserved_vmids: [100, 101, 102, 103, 104, 105, 106, 107, 108]
+    verify_tls: true
+  omada: {url: "https://192.168.20.101:8043"}
+public_ips: [203.0.113.10]

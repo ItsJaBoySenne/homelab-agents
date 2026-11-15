@@ -2,6 +2,8 @@
 
 python3 tests/test_github.py   (needs paramiko importable; no network)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import json
 import os
 import sqlite3
@@ -32,12 +34,13 @@ def check(cond, label):
 # --- Infisical stand-in: the token lives in /GitHub of the servers project (or nowhere) ---
 INFISICAL = {'/GitHub': {'GITHUB_TOKEN': TOKEN}}
 READS = []
-def fake_secrets(path, names):
+from gateway.secret_store import SecretStoreError  # noqa: E402
+def fake_secrets(path, names, optional=()):
     READS.append(path)
     if path not in INFISICAL:
-        raise urllib.error.HTTPError('https://infisical.test', 404, 'not found', {}, None)
+        raise SecretStoreError('not_found', path.strip('/') + '/GITHUB_TOKEN is not in the secret store')
     return {n: INFISICAL[path][n] for n in names}
-gh.infisical_secrets = fake_secrets
+gh.platform_secrets = fake_secrets
 
 # --- GitHub stand-in: one repository with pull requests ---
 PRS = {7: {'number': 7, 'title': 'Old work', 'state': 'open', 'html_url': 'https://github.com/octo/site/pull/7', 'draft': False,
@@ -194,7 +197,7 @@ check(s == 502 and r['error'] == 'github_refused' and 'Bad credentials' in r['de
 os.environ.pop('GITHUB_TOKEN')
 INFISICAL.clear()
 s, r = github(operation='list_prs', repo='octo/site')
-check(s == 503 and r['error'] == 'github_not_configured' and '/GitHub' in r['detail'], 'no token anywhere: github_not_configured')
+check(s == 503 and r['error'] == 'github_not_configured' and 'GitHub/GITHUB_TOKEN' in r['detail'], 'no token anywhere: github_not_configured')
 os.environ['INFISICAL_GITHUB_PATH'] = '/Tokens/GitHub'
 INFISICAL['/Tokens/GitHub'] = {'GITHUB_TOKEN': TOKEN}
 s, r = github(operation='list_prs', repo='octo/site')
@@ -222,8 +225,8 @@ gh._call = repo_call
 def admin(**body):
     return call('POST', '/v1/github', {'actor': 'owner', **body}, token='a' * 40)
 s, r = admin(operation='status')
-check(s == 200 and r['configured'] and r['ok'] and r['source'] == 'infisical' and r['login'] == 'hla-bot' and r['scopes'] == ['read:org', 'repo']
-      and r['token_type'] == 'classic' and TOKEN not in json.dumps(r) and USERS[-1] == TOKEN, 'status: source infisical, login and scopes, never the token')
+check(s == 200 and r['configured'] and r['ok'] and r['source'] == 'secret_store' and r['login'] == 'hla-bot' and r['scopes'] == ['read:org', 'repo']
+      and r['token_type'] == 'classic' and TOKEN not in json.dumps(r) and USERS[-1] == TOKEN, 'status: source secret_store, login and scopes, never the token')
 os.environ['GITHUB_TOKEN'] = TOKEN
 s, r = admin(operation='status')
 check(s == 200 and r['source'] == 'env', 'status: GITHUB_TOKEN from .env.gateway reported as env')

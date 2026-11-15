@@ -11,9 +11,9 @@ It never writes, moves or deletes any other file there. The desired state lives 
      an error and no other router got worse -> on any failure the previous content is written back.
 
 Every value that reaches the file passes a strict pattern first (host names, route names, users, resolvers, entry points,
-backends) and is written as a JSON-quoted YAML string. Basic-auth passwords are generated in the Agent Generated Infisical
-project (gateway/agent_secrets.py) and hashed here with apr1 (MD5-crypt, what htpasswd -m writes); only the hash goes into
-the file, the password never leaves Infisical and the gateway. Agents can only file a pending request (POST
+backends) and is written as a JSON-quoted YAML string. Basic-auth passwords are generated in the generated namespace of the secret store
+(gateway/agent_secrets.py) and hashed here with apr1 (MD5-crypt, what htpasswd -m writes); only the hash goes into
+the file, the password never leaves the secret store and the gateway. Agents can only file a pending request (POST
 /v1/routes/request, level >= 4 on the traefik server); the owner approves it on the dashboard. Stdlib only.
 """
 import base64
@@ -30,10 +30,13 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 from . import agent_secrets, websites
 from .core import SERVERS
+from . import core
 
 NAME = 'routes'
-TRAEFIK_SERVER = 'traefik'
-WEBSITE_SERVER = 'public-website'
+# The servers with role traefik and role website in the inventory. Without one, a name that can never be a server (so every
+# call to it is refused as an unknown server and the routes feature stays unusable, not wrong).
+TRAEFIK_SERVER = core.TRAEFIK_SERVER or '(no traefik server in the inventory)'
+WEBSITE_SERVER = core.WEBSITE_SERVER or '(no website server in the inventory)'
 AGENT_LEVEL = 4  # an agent files route requests with level >= 4 on the traefik server
 PREFIX = 'hla-'
 ENVIRONMENTS = ('production', 'staging')
@@ -103,17 +106,24 @@ def backup_dir():
 
 
 def public_ips():
-    raw = os.getenv('PUBLIC_IPS', '').strip() or '203.0.113.10'
-    ips = [p.strip() for p in raw.split(',') if p.strip()]
-    return [ip for ip in ips if _IP.fullmatch(ip)][:10] or ['203.0.113.10']
+    """The router's public addresses: PUBLIC_IPS (comma-separated) if set, else public_ips in the inventory; [] = unknown."""
+    raw = os.getenv('PUBLIC_IPS', '').strip()
+    ips = [p.strip() for p in raw.split(',') if p.strip()] if raw else list(core.PUBLIC_IPS)
+    return [ip for ip in ips if _IP.fullmatch(ip)][:10]
 
 
 def traefik_lan_ip():
-    return SERVERS[TRAEFIK_SERVER][0]
+    return SERVERS.get(TRAEFIK_SERVER, ('',))[0]
+
+
+def website_ip():
+    return SERVERS.get(WEBSITE_SERVER, ('',))[0]
 
 
 def backend_hosts():
-    hosts = [SERVERS[WEBSITE_SERVER][0], WEBSITE_SERVER]
+    if WEBSITE_SERVER not in SERVERS:
+        return []
+    hosts = [website_ip(), WEBSITE_SERVER]
     hosts += [h.strip().lower() for h in os.getenv('WEBSITE_BACKEND_HOSTS', '').split(',') if h.strip()]
     return list(dict.fromkeys(h for h in hosts if re.fullmatch(r'[a-z0-9.-]{1,253}', h)))
 
@@ -257,10 +267,10 @@ def secret_name(route):
 
 
 def ensure_password(name, host, actor):
-    """The basic-auth password from the Agent Generated project, created there when missing. Replaced in tests."""
+    """The basic-auth password from the generated secrets, created there when missing. Replaced in tests."""
     if not agent_secrets.configured():
-        raise RouteError(503, 'secrets_not_configured', 'basic auth needs the Agent Generated Infisical project '
-                                                        '(INFISICAL_GENERATED_PROJECT_ID) on the gateway')
+        raise RouteError(503, 'secrets_not_configured', 'basic auth needs the generated secrets: '
+                                                        + agent_secrets.not_configured_detail())
     try:
         values = agent_secrets.load(force=True)
     except RuntimeError as exc:
@@ -274,7 +284,7 @@ def ensure_password(name, host, actor):
         values = agent_secrets.load()
     value = values.get(name)
     if not value:
-        raise RouteError(502, 'secrets_unavailable', 'the password ' + name + ' could not be read back from Infisical')
+        raise RouteError(502, 'secrets_unavailable', 'the password ' + name + ' could not be read back from the secret store')
     return value
 
 
@@ -290,14 +300,14 @@ def parse_backend(body):
     if body.get('backend') not in (None, ''):
         m = _BACKEND.fullmatch(str(body['backend']).strip().lower())
         if not m:
-            raise RouteError(400, 'invalid_backend', 'backend is http://192.168.30.11:<port>')
+            raise RouteError(400, 'invalid_backend', 'backend is http://' + (allowed[0] if allowed else '<website server>') + ':<port>')
         host, port = m.group(1), int(m.group(2))
     else:
         port = body.get('backend_port')
         if isinstance(port, str) and port.isdigit():
             port = int(port)
         if isinstance(port, bool) or not isinstance(port, int):
-            raise RouteError(400, 'invalid_backend', 'backend_port is the port the website publishes on ' + allowed[0])
+            raise RouteError(400, 'invalid_backend', 'backend_port is the port the website publishes on ' + (allowed[0] if allowed else 'the website server'))
         host = str(body.get('backend_host') or allowed[0]).strip().lower()
     if host not in allowed:
         raise RouteError(400, 'backend_not_allowed', 'backends are on the website VM only: ' + ', '.join(allowed))
@@ -654,7 +664,7 @@ def dns_check(host, known=(), protection='public'):
     expected = public_ips()
     domain = domain_of(host, known)
     rel = '@' if host == domain else (host[:-len(domain) - 1] if domain else host)
-    v4 = next((ip for ip in expected if ':' not in ip), expected[0])
+    v4 = next((ip for ip in expected if ':' not in ip), expected[0] if expected else '<your public IP>')
     record = f'{rel} A {v4}' + (f'   (in the DNS zone of {domain})' if domain else '')
     out = {'host': host, 'addresses': addresses, 'expected': expected, 'record': record}
     if failure:
@@ -663,6 +673,9 @@ def dns_check(host, known=(), protection='public'):
         return {**out, 'status': 'missing', 'message': f'{host} has no DNS record. Add {rel} A {v4}; the certificate cannot be issued '
                                                        'until it exists (the route still works on the LAN with a hosts override).'}
     lan = traefik_lan_ip()
+    if not expected:
+        return {**out, 'status': 'unknown', 'message': 'resolves to ' + ', '.join(addresses) + '; the public IP is unknown '
+                                                       '(set public_ips in the inventory) so it cannot be checked'}
     if all(a in expected for a in addresses):
         return {**out, 'status': 'ok', 'message': 'points at ' + ', '.join(addresses)}
     if all(a in expected or a == lan for a in addresses):
@@ -946,7 +959,7 @@ def requests(db, status=None, limit=50):
     for values in db.execute(q, args):
         r = dict(zip(REQUEST_COLUMNS, values))
         r['suggested_name'] = name_for_host(r['host'])
-        r['backend'] = f'http://{SERVERS[WEBSITE_SERVER][0]}:{r["backend_port"]}'
+        r['backend'] = f'http://{website_ip()}:{r["backend_port"]}'
         out.append(r)
     return out
 
@@ -1038,6 +1051,6 @@ def listing(db, execute, dns=True):
     return {'routes': out, 'domains': known, 'domain_suggestions': suggestions, 'other_routers': others,
             'requests': requests(db, limit=30), 'traefik_ok': bool(state.get('ok')), 'traefik_error': state.get('error'),
             'cert_resolver': resolver_name, 'cert_resolver_source': source, 'public_ips': public_ips(), 'traefik_lan_ip': traefik_lan_ip(),
-            'backend_hosts': backend_hosts(), 'website_ip': SERVERS[WEBSITE_SERVER][0], 'environments': list(ENVIRONMENTS),
+            'backend_hosts': backend_hosts(), 'website_ip': website_ip(), 'environments': list(ENVIRONMENTS),
             'protections': list(PROTECTIONS), 'default_protection': DEFAULT_PROTECTION, 'lan_ranges': list(LAN_RANGES),
             'agent_level': AGENT_LEVEL, **files}

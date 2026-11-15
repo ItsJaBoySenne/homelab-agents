@@ -22,9 +22,9 @@ ALL = {p: 1 for p in ('Sys.Audit', 'Sys.Modify', 'Sys.AccessNetwork', 'VM.Audit'
 READ_ONLY = {'/': {'Sys.Audit': 1, 'VM.Audit': 1, 'Datastore.Audit': 1}}
 
 
-def secrets(folder, names):
+def secrets(folder, names, optional=()):
     values = INFISICAL[folder]
-    return {n: values[n] for n in names}
+    return {n: values[n] for n in tuple(names) + tuple(optional) if n in values or n in names}
 
 
 def _vm(vmid, name, status='running', ip=None, tags='', template=False, mem=2 << 30, disk=32 << 30, agent=True, bridge='vmbr0', gw='192.168.10.1',

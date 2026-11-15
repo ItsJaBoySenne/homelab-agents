@@ -95,7 +95,10 @@ def run(execute, app, ref, *, sha=None, staging=True):
     """Stage (if enabled) then deploy one commit. execute(server, script, timeout=, max_output=) is core.execute."""
     result = {'app': app['name'], 'server': app['server'], 'ref': ref, 'staging': None, 'target': None, 'sha': sha, 'from': None}
     if staging and app['staging']:
-        st = _phase(execute('sandbox', staging_script(app, ref), timeout=TIMEOUT, max_output=8000))
+        from .core import SANDBOX
+        if not SANDBOX:
+            raise RuntimeError('staging needs a sandbox server in the inventory')
+        st = _phase(execute(SANDBOX, staging_script(app, ref), timeout=TIMEOUT, max_output=8000))
         result['staging'] = st
         if not st['verified']:
             return {**result, 'status': 'staging_failed', 'verified': False, 'error_class': 'staging_' + st['state']}

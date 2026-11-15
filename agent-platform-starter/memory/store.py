@@ -68,7 +68,8 @@ def capture_tool(db, workspace, call, result, *, task_id=None, agent_id=None):
     if workspace!='home' or not isinstance(call,dict) or not isinstance(result,dict):
         return None
     server,mode=call.get('server') or result.get('server'),call.get('mode')
-    if not isinstance(server,str) or server=='sandbox':  # the sandbox is reset to a snapshot; its state is not knowledge
+    import inventory
+    if not isinstance(server,str) or server==(inventory.sandbox(inventory.current()[0]) or 'sandbox'):  # reset to a snapshot; its state is not knowledge
         return None
     meta=dict(server=server,task_id=task_id,agent_id=agent_id)
     ok=result.get('exit_code')==0 and not result.get('timed_out')

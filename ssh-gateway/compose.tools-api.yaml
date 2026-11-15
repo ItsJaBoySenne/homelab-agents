@@ -9,6 +9,9 @@ services:
     env_file: .env.gateway
     volumes:
       - gateway_audit:/data
+      # HLA_SECRET_STORE_V1: the local secret store (secrets.enc), and the inventory (read-only).
+      - gateway_secrets:/data/secrets
+      - ../config/inventory.yaml:/config/inventory.yaml:ro
       - /etc/ssl/certs:/etc/ssl/certs:ro
     environment:
       SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
@@ -25,3 +28,6 @@ networks:
   hla_tool_net:
     external: true
     name: hla-tool-net
+volumes:
+  gateway_audit:
+  gateway_secrets:

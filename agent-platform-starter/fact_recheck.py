@@ -47,13 +47,18 @@ def migrate(db):
         WHERE finished_at IS NULL''')
 
 
+def _sandbox():
+    import inventory
+    return inventory.sandbox(inventory.current()[0]) or 'sandbox'
+
+
 def target_of(row):
     """(diagnostic, target or None) when this fact can be re-run safely, else None."""
     key = row.get('key') or ''
     if row.get('source') != 'ssh-gateway:diagnostic' or not key.startswith('diag:'):
         return None
     parts = key.split(':', 3)
-    if len(parts) < 3 or parts[1] != row.get('server') or parts[1] == 'sandbox':
+    if len(parts) < 3 or parts[1] != row.get('server') or parts[1] == _sandbox():
         return None
     name, target = parts[2], (parts[3] if len(parts) == 4 else None)
     if name not in RERUNNABLE or (name in TARGETED_DIAGNOSTICS) != bool(target):

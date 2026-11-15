@@ -1,7 +1,7 @@
 """The Omada controller on the dashboard (HLA_OMADA_V1): the Infrastructure view shows the connection the SSH gateway
 has to the controller's Open API, lets the owner trust its certificate fingerprint and set the agents' level.
 
-The gateway holds the app credentials (Infisical /Omada), checks everything again and audits it; every route here uses
+The gateway holds the app credentials (Omada/CLIENT_ID and Omada/CLIENT_SECRET in its secret store), checks everything again and audits it; every route here uses
 POLICY_ADMIN_TOKEN, reads need the dashboard session, and changes need the UI write header and an approver
 (approvals.require_approver), like the Proxmox routes.
 

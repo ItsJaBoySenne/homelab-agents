@@ -2,6 +2,8 @@
 
 python3 tests/test_voice.py   (no database, no network: a fake OpenAI-compatible service through httpx.MockTransport)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import json
 import os
 import sys

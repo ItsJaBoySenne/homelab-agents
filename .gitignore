@@ -15,6 +15,9 @@ id_ecdsa*
 id_dsa*
 *.ppk
 infisical-*.json
+# The real inventory (config/inventory.example.yaml is the template) and the local secret store.
+config/inventory.yaml
+secrets.enc
 
 # Database dumps and backups (agent-platform-starter/backups/) stay on the host.
 backups/

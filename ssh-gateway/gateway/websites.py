@@ -25,10 +25,12 @@ import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
 from .core import SERVERS
+from . import core
 
 NAME = 'websites'
-WEBSITE_SERVER = 'public-website'
-TRAEFIK_SERVER = 'traefik'
+# The servers with role website and role traefik in the inventory (see routes.py for the placeholder names).
+WEBSITE_SERVER = core.WEBSITE_SERVER or '(no website server in the inventory)'
+TRAEFIK_SERVER = core.TRAEFIK_SERVER or '(no traefik server in the inventory)'
 NEEDS = (WEBSITE_SERVER, TRAEFIK_SERVER)  # an agent reads the inventory with level >= 1 on both
 CACHE_SECONDS = 60
 REFRESH_SECONDS = 15
@@ -719,7 +721,7 @@ def _local_backend(url, hosts):
 
 def build(containers, routes_info, website_ip):
     """Sites from containers and routes (before the HTTP checks)."""
-    hosts = {website_ip, WEBSITE_SERVER, 'public-website.lan', 'public-website.local'}
+    hosts = {website_ip, WEBSITE_SERVER, WEBSITE_SERVER + '.lan', WEBSITE_SERVER + '.local'}
     hosts |= {h.strip().lower() for h in os.getenv('WEBSITE_BACKEND_HOSTS', '').split(',') if h.strip()}
     sites, by_container, port_owner = {}, {}, {}
     for c in containers:
@@ -861,6 +863,8 @@ def inventory(execute, now=None):
     """The whole inventory: two SSH calls in parallel (containers, routes), then one for the checks."""
     now = time.time() if now is None else now
     boundary = 'HLA_' + secrets.token_hex(8)
+    if WEBSITE_SERVER not in SERVERS or TRAEFIK_SERVER not in SERVERS:
+        raise ValueError('the inventory names no server with role website and role traefik')
     website_ip = SERVERS[WEBSITE_SERVER][0]
     try:
         route_cmd = routes_script(boundary)

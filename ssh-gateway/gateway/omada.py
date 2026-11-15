@@ -1,9 +1,10 @@
 """Omada Software Controller through the gateway (HLA_OMADA_V1): its Open API with a client-credentials app.
 
 Connection
-  Service `omada:controller` (core.SERVICES: pinned base URL https://192.168.20.101:8043 and the Infisical folder /Omada of
-  the servers project, holding APPLICATION_NAME, CLIENT_ID and CLIENT_SECRET of an Open API app in Client mode). OMADA_URL
-  may change the port, never the host. The client secret and the access tokens never leave the gateway: they are masked in
+  Service `omada:controller`, present when the inventory has services.omada {url, site, verify_tls}: the pinned base URL
+  and the secret-store folder Omada (Omada/CLIENT_ID, Omada/CLIENT_SECRET and optionally Omada/APPLICATION_NAME of an
+  Open API app in Client mode). OMADA_URL may change the port, never the host. `site` is the site used when a request
+  names none and the controller has several. The client secret and the access tokens never leave the gateway: they are masked in
   every reply and audit row ([secret:OMADA_CLIENT_SECRET], [secret:OMADA_ACCESS_TOKEN]).
   Flow: GET /api/info (no auth) gives the omadacId; POST /openapi/authorize/token?grant_type=client_credentials
   {omadacId, client_id, client_secret} gives an access token (expiresIn seconds, renewed a minute early, and once more when
@@ -11,6 +12,8 @@ Connection
   Replies are {errorCode, msg, result}; errorCode != 0 is an error.
 
 TLS (the controller's certificate is self-signed)
+  verify_tls: true in the inventory: the chain is always checked (against certs/omada-ca.pem / OMADA_CA when present,
+  else the system CAs) together with the host name. Otherwise:
   certs/omada-ca.pem (or OMADA_CA) present: the chain is checked against that file only (and the name against
   OMADA_TLS_NAME when set). Otherwise the leaf certificate's SHA-256 is pinned: the first contact records it as pending
   and nothing with credentials is sent until the owner trusts that fingerprint on the dashboard; a different certificate
@@ -37,7 +40,8 @@ import urllib.parse
 from . import core
 
 NAME = 'omada:controller'
-HOST = '192.168.20.101'
+SETTINGS = core.INVENTORY['services'].get('omada') or {}
+HOST = SETTINGS.get('host')  # None: no controller in the inventory (the service does not exist)
 CONFIG_SECONDS = 60
 INFO_SECONDS = 300
 PAGE = 10000                   # characters of a generic GET reply per call (offset / eof)
@@ -61,7 +65,7 @@ CLIENT_KEYS = ('mac', 'ip', 'name', 'hostName', 'vendor', 'deviceType', 'wireles
 DEVICE_KEYS = ('mac', 'name', 'type', 'model', 'ip', 'status', 'firmwareVersion', 'version', 'uptime', 'site', 'cpuUtil',
                'memUtil', 'clientNum', 'needUpgrade')
 
-# Replaced in tests: the Infisical reader and where (host, port) really connects.
+# Replaced in tests: the secret reader and where (host, port) really connects.
 _secrets = None
 _address = lambda host, port: (host, port)  # noqa: E731
 
@@ -121,7 +125,9 @@ def _clean(text, limit=300):
 # ── configuration ────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def base_url():
-    """https://192.168.20.101:<port>: the pinned URL, or OMADA_URL when it keeps the pinned host."""
+    """https://<inventory host>:<port>: the pinned URL, or OMADA_URL when it keeps the pinned host."""
+    if NAME not in core.SERVICES:
+        raise OmadaError(503, 'omada_not_configured', 'the Omada controller is not in the inventory (services.omada)')
     pinned = core.SERVICES[NAME][0]
     raw = os.getenv('OMADA_URL', '').strip().rstrip('/')
     if not raw:
@@ -131,7 +137,7 @@ def base_url():
         port = parts.port or 443
     except ValueError:
         port = None
-    if parts.scheme != 'https' or parts.hostname != HOST or not port or parts.path not in ('', '/') or parts.query:
+    if parts.scheme != 'https' or (parts.hostname or '').lower() != HOST or not port or parts.path not in ('', '/') or parts.query:
         raise OmadaError(503, 'omada_target_mismatch', f'OMADA_URL must be https://{HOST}[:port] (the pinned controller)')
     return f'https://{HOST}:{port}'
 
@@ -142,17 +148,19 @@ def ca_file():
 
 
 def config():
-    """{app, client_id, client_secret} from Infisical /Omada (cached CONFIG_SECONDS)."""
+    """{app, client_id, client_secret} from the secret store, folder Omada (cached CONFIG_SECONDS)."""
     with _lock:
         if _cfg['value'] and time.monotonic() - _cfg['at'] < CONFIG_SECONDS:
             return _cfg['value']
+    if NAME not in core.SERVICES:
+        raise OmadaError(503, 'omada_not_configured', 'the Omada controller is not in the inventory (services.omada)')
     folder = core.SERVICES[NAME][1]
-    reader = _secrets or core.infisical_secrets
+    reader = _secrets or core.platform_secrets
     try:
-        values = reader(folder, ('APPLICATION_NAME', 'CLIENT_ID', 'CLIENT_SECRET'))
+        values = reader(folder, ('CLIENT_ID', 'CLIENT_SECRET'), ('APPLICATION_NAME',))
     except Exception as exc:  # noqa: BLE001 - only the type is shown, never a value
         raise OmadaError(503, 'omada_not_configured',
-                         f'cannot read APPLICATION_NAME, CLIENT_ID and CLIENT_SECRET from Infisical {folder} ({type(exc).__name__})') from None
+                         f'cannot read CLIENT_ID and CLIENT_SECRET from the secret store ({folder.strip("/")}/...) ({type(exc).__name__})') from None
     cid, secret = str(values.get('CLIENT_ID') or '').strip(), str(values.get('CLIENT_SECRET') or '').strip()
     bad = lambda v: not v or len(v) > 200 or any(c.isspace() or ord(c) < 32 for c in v)  # noqa: E731
     if bad(cid) or bad(secret):
@@ -186,6 +194,10 @@ class _Connection(http.client.HTTPSConnection):
 
 def _context():
     ca = ca_file()
+    if SETTINGS.get('verify_tls'):
+        ctx = ssl.create_default_context(cafile=ca)  # chain and host name always checked; no fingerprint pinning needed
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        return ctx
     if ca:
         ctx = ssl.create_default_context(cafile=ca)
         ctx.check_hostname = bool(os.getenv('OMADA_TLS_NAME', '').strip())
@@ -201,10 +213,15 @@ def fingerprint_text(fp):
     return ':'.join(fp[i:i + 2] for i in range(0, len(fp), 2)).upper() if fp else None
 
 
+def _ca_mode():
+    """True when the chain is checked (verify_tls in the inventory, or a CA file): no fingerprint pinning then."""
+    return bool(SETTINGS.get('verify_tls')) or bool(ca_file())
+
+
 def _checker(db, credentials):
     """The certificate check for one connection: with a CA file the chain was verified already; otherwise compare the
     leaf's SHA-256 with the trusted one. An unknown certificate is recorded as pending."""
-    if ca_file():
+    if _ca_mode():
         return lambda der: None
 
     def check(der):
@@ -299,7 +316,7 @@ def access_token(db, renew=False):
     try:
         result = _result(status, out, 'token request') or {}
     except OmadaError as exc:
-        raise OmadaError(502, 'omada_auth_failed', exc.detail + ' (check CLIENT_ID/CLIENT_SECRET in Infisical /Omada and that '
+        raise OmadaError(502, 'omada_auth_failed', exc.detail + ' (check Omada/CLIENT_ID and Omada/CLIENT_SECRET in the secret store and that '
                          'the Open API app is in Client mode)', omada_code=exc.extra.get('omada_code')) from None
     token = str(result.get('accessToken') or '')
     if not token or any(c.isspace() for c in token):
@@ -345,7 +362,7 @@ def _pages(db, path, limit_pages=MAX_PAGES):
 # ── operations ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
 def certificate(db):
-    if ca_file():
+    if _ca_mode():
         return {'mode': 'ca', 'state': 'ca', 'trusted': None, 'seen': None}
     trusted, seen = _state(db, 'cert_trusted'), _state(db, 'cert_seen')
     state = 'unknown' if not seen and not trusted else 'trusted' if seen in (None, trusted) and trusted else 'changed' if trusted else 'pending'
@@ -362,6 +379,8 @@ def sites(db):
 def site_id(db, value):
     value = str(value or '').strip()
     found, _ = sites(db)
+    if not value and len(found) > 1 and SETTINGS.get('site'):
+        value = SETTINGS['site']  # the inventory's default site
     if not value:
         if len(found) == 1:
             return found[0]['siteId'], found
@@ -477,7 +496,7 @@ def run(db, req, who):
     if op == 'status':
         return status(db, refresh=req.get('refresh', False))
     if op == 'trust_certificate':
-        if ca_file():
+        if _ca_mode():
             raise OmadaError(409, 'ca_mode', 'the certificate is checked against omada-ca.pem; there is nothing to trust here')
         try:
             info(db, refresh=True)  # see the certificate the controller presents right now

@@ -1,0 +1,34 @@
+# Homelab Agents inventory: which servers agents may reach and which integrations exist.
+# Copy to config/inventory.yaml (it is git-ignored) and edit. Both containers mount it read-only at
+# /config/inventory.yaml (HLA_INVENTORY overrides the path). No file, or `servers: []` and no services, is valid:
+# the platform then runs chat and agents without server tools.
+#
+# Secrets never go in this file. They live in the gateway's secret store (python -m gateway.cli secrets ...):
+#   servers/<name>/SSH_PRIVATE_KEY        the agent key of each server   (secrets import-ssh-key <name> <file>)
+#   servers/<name>/SSH_HOST_FINGERPRINT   its pinned ed25519 host key    (secrets pin-host-key <name>, or host_fingerprint below)
+#   Proxmox/<node>/TOKEN_ID, TOKEN_SECRET · Omada/CLIENT_ID, CLIENT_SECRET · HomeAssistant/HA_TOKEN · GitHub/GITHUB_TOKEN
+
+servers:            # SSH targets agents may use (name -> how to reach it)
+  - name: server1                 # lowercase letters, digits, . _ - ; also the name on the Policy page and in the audit log
+    host: 192.168.1.10            # IP address or DNS name
+    user: svc-hla-agent           # default (ssh-fleet/ creates this user)
+    port: 22                      # default
+    description: "Docker host"    # shown to agents
+    sandbox: false                # true for the one disposable sandbox VM, if any (free shell, staging of deploys)
+    # role: website               # optional: website (serves the public sites) or traefik (the reverse proxy host)
+    # default_level: 1            # optional: the policy level it starts with (0-6); default 6 for the sandbox, else 1
+    # host_fingerprint: "SHA256:..." # optional: pin the host key here instead of in the secret store
+    # vmid: 110                   # optional: its Proxmox VMID (never offered for new VMs; used by the sandbox reset)
+    # node: pve                   # optional: the Proxmox node it runs on
+
+services:           # optional integrations; omit a block to disable it
+  # proxmox:
+  #   url: https://192.168.1.5:8006
+  #   nodes: [pve]                # node names; a separate install per node: {name: pve2, url: https://192.168.1.6:8006}
+  #   reserved_vmids: [100]       # VMIDs agents must never use for new VMs
+  #   verify_tls: true            # put the node CA (/etc/pve/pve-root-ca.pem) in ssh-gateway/certs/<node>-ca.pem
+  # omada: {url: https://192.168.1.2, site: Default, verify_tls: false}   # false: you trust its certificate on the dashboard
+  # homeassistant: {url: http://192.168.1.20:8123}
+  # github: {}                    # token on the Connections page, or GitHub/GITHUB_TOKEN in the secret store
+
+public_ips: []      # the router's public IPs (for website/DNS checks); empty = unknown

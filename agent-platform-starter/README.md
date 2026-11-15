@@ -159,7 +159,7 @@ allowed approver, like policy edits):
 - **Credentials**: name, kind, description, fingerprint (an HMAC keyed from `GATEWAY_CREDENTIAL_KEY`) and who changed it when. A value is typed once into a password
   field, sent to the gateway's write-only store (`GATEWAY_CREDENTIAL_KEY` in `../ssh-gateway/.env.gateway`) and never
   shown or returned again; *Replace* keeps the name. Without `POLICY_ADMIN_TOKEN` or the key the page says what to set.
-- **GitHub**: whether the token works, where it comes from (credential store, `.env.gateway` or Infisical) and its login
+- **GitHub**: whether the token works, where it comes from (credential store, `.env.gateway` or the gateway's secret store) and its login
   and scopes; *Test connection*; a field that stores `GITHUB_TOKEN` in the credential store (it takes precedence); the
   `github` service level; and a picker of the repositories the token reaches: checking one adds it to the allowlist
   (`github.repos`, the same list as Policy → GitHub), with an *allow merges* switch per repository.
@@ -311,8 +311,8 @@ reuse their host names or router names (the gateway refuses with the router's na
   staging → LAN only + password; you can pick any protection), the backend as a container/port of `public-website` from
   the inventory (or another port), an optional path prefix. The DNS check runs as you type and says what record to add
   (`shop-staging A 203.0.113.10`); saving with missing DNS is allowed and warned (no certificate until DNS exists).
-- The list shows each route's address, environment, protection (with the login user and the Infisical secret name of the
-  password: read it in Infisical, Agent Generated project), backend and the container behind it, DNS state, Traefik
+- The list shows each route's address, environment, protection (with the login user and the secret name of the
+  password: in the gateway's generated secrets; `secrets export … --generated` with the gateway CLI, or Infisical's Agent Generated project with that backend), backend and the container behind it, DNS state, Traefik
   router state and the certificate from the inventory. **Edit** and **Delete** (with a confirmation).
 - **Requested by agents**: pending requests with **Approve** (creates the route through the gateway) and **Reject**; the
   same requests are "Needs you" items (kind `route_request`), with the project of the task that asked.
@@ -455,8 +455,9 @@ same for TTS with `tts-1`.
 ## Configure and deploy
 
 Settings live in `.env` (`.env.example` lists all of them). The CA files (`proxmox-ca.pem` for the main
-Proxmox host, `pve2-ca.pem` for the sandbox host, `infisical-ca.pem`) sit next to it and are not in git. The gateway's
-`./dc` copies the two Proxmox CA files into `../ssh-gateway/certs/` for its own TLS checks.
+Proxmox host, `<node>-ca.pem` for the sandbox's Proxmox node) sit next to it and are not in git. Servers and
+integrations come from `../config/inventory.yaml` (mounted read-only at `/config/inventory.yaml`). The gateway's
+`./dc` copies the Proxmox CA files into `../ssh-gateway/certs/` for its own TLS checks.
 
 ```bash
 cd homelab-agents/agent-platform-starter

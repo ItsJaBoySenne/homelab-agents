@@ -12,16 +12,24 @@ import time
 import httpx
 import attachments
 import providers
+import inventory
 from brain.tools import (DEFINITIONS as BRAIN_TOOLS, search as brain_search, save_diagnostic as brain_save_diagnostic,
                          save_note as brain_save_note)
 
 GATEWAY = 'http://ssh-gateway-api:8099'
 READ_ONLY_TOOLS = ('server_diagnostic','knowledge_search')
+# The inventory (config/inventory.yaml): the sandbox, the website server and the Traefik host by their roles. A missing role
+# is a name no server can have, so the tools that need it are simply never offered.
+_INV = inventory.current()[0]
+SANDBOX = inventory.sandbox(_INV) or '(no sandbox)'
+WEBSITE_SERVER = inventory.role(_INV, 'website') or '(no website server)'
+WEBSITE_HOST = (inventory.server(_INV, WEBSITE_SERVER) or {}).get('host', '')
+HA_URL = (_INV['services'].get('homeassistant') or {}).get('url', 'Home Assistant')
 # HLA_WEBSITES_V1: the website inventory (gateway/websites.py) needs level 1 on both of these servers.
-WEBSITE_SERVERS = ('public-website','traefik')
+WEBSITE_SERVERS = (WEBSITE_SERVER, inventory.role(_INV, 'traefik') or '(no traefik server)')
 WEBSITE_ENVIRONMENTS = ('all','production','staging','test')
 # HLA_ROUTES_V1: agents only file route requests (the owner approves them); the gateway wants level 4 on traefik.
-ROUTE_SERVER = 'traefik'
+ROUTE_SERVER = WEBSITE_SERVERS[1]
 ROUTE_LEVEL = 4
 ROUTE_ENVIRONMENTS = ('staging','production')
 ROUTE_PROTECTIONS = ('public','lan_only','lan_only+basic_auth','basic_auth')
@@ -511,10 +519,10 @@ def build_tools(perms, budget=None, project=False):
     if omada:
         tools.append(_omada_tool(omada))
     levels=', '.join(f'{s} (level {perms[s]["level"]})' for s in sorted(perms)) or 'none'
-    sandbox=perms.get('sandbox',{})
+    sandbox=perms.get(SANDBOX,{})
     prompt=('Your server permissions: '+levels+'. Levels: 1 diagnostics, 2 package installs, 3 service/container restarts, '
         '4 Compose deploys, 5 shell commands with approval, 6 free shell. '
-        +('The sandbox server is a disposable, isolated VM with a free shell and root via sudo -n: use it to install, build and '
+        +('The sandbox server is a disposable, isolated VM ('+SANDBOX+') with a free shell and root via sudo -n: use it to install, build and '
           'test freely before touching real servers; it can be reset to a clean snapshot and cannot reach the home network. '
           if sandbox.get('free_shell') else '')
         +('UNHINGED MODE is on for '+', '.join(unhinged)+': commands there run immediately without human approval, so double-check '
@@ -559,7 +567,7 @@ def websites_allowed(perms):
 
 
 WEBSITES_TOOL={'type':'function','function':{'name':'websites',
-    'description':('Read-only overview of every website on the website VM (public-website): per site its public URL(s) with '
+    'description':('Read-only overview of every website on the website VM ('+WEBSITE_SERVER+'): per site its public URL(s) with '
         'HTTP status, response time and certificate days left (checked through Traefik), its environment (production, staging '
         'or test; environment_source guess means guessed from names), status (up, protected = answers with a login or '
         'allow-list, degraded, down) with the reason, LAN URLs and its containers (image, state, health). Cached for a minute. '
@@ -576,11 +584,11 @@ def routes_allowed(perms):
 
 
 REQUEST_ROUTE_TOOL={'type':'function','function':{'name':'request_route',
-    'description':('Ask the owner for a public address (domain or subdomain) for a website container on public-website. This only '
+    'description':('Ask the owner for a public address (domain or subdomain) for a website container on '+WEBSITE_SERVER+'. This only '
         'files a request: the owner approves or rejects it on the dashboard ("Needs you"), and then the gateway writes the Traefik '
         'route (HTTPS with a certificate). Nothing changes until then, so report that the route is requested, not live. host is the '
         'full name under one of the owner\'s domains (e.g. shop-staging.example.com; a project brief names the addresses to use); '
-        'backend_port is the port the container publishes on public-website (192.168.30.11). Staging defaults to LAN-only plus a '
+        'backend_port is the port the container publishes on '+WEBSITE_SERVER+' ('+WEBSITE_HOST+'). Staging defaults to LAN-only plus a '
         'password, production to public.'),
     'parameters':{'type':'object','properties':{
         'host':{'type':'string','maxLength':253},
@@ -592,12 +600,12 @@ REQUEST_ROUTE_TOOL={'type':'function','function':{'name':'request_route',
 
 
 def _secrets_tool(sec):
-    """HLA_SECRETS_V1: secrets in the Agent Generated Infisical project; the model only ever sees references."""
+    """HLA_SECRETS_V1: secrets in the gateway's secret store (generated namespace); the model only ever sees references."""
     level=sec['level'];free=bool(sec.get('free_shell') or sec.get('unhinged'))
     ops=['list']+(['create'] if level>=4 or free else [])
     return {'type':'function','function':{'name':'secrets',
         'description':('Passwords, tokens and keys you never see. list: names and their references. create {name, kind, description}: '
-            'the gateway generates a random value (letters and digits; hex for kind hex), stores it in Infisical and returns '
+            'the gateway generates a random value (letters and digits; hex for kind hex), stores it in the gateway\'s secret store and returns '
             '{{secret:NAME}}. Write {{secret:NAME}} exactly where the value belongs in server_execute_approved commands or '
             'server_write_file content, e.g. ALTER ROLE app PASSWORD \'{{secret:VP_STAGING_DB_APP_PASSWORD}}\' or '
             'DB_PASSWORD={{secret:VP_STAGING_DB_APP_PASSWORD}} in an .env file. Output shows [secret:NAME] where a value appears. '
@@ -607,7 +615,7 @@ def _secrets_tool(sec):
             'operation':{'type':'string','enum':ops},
             'name':{'type':'string','pattern':'^[A-Z][A-Z0-9_]{2,63}$'},
             'kind':{'type':'string','enum':['password','token','hex']},
-            'description':{'type':'string','maxLength':200,'description':'what it is for, stored as the Infisical comment'},
+            'description':{'type':'string','maxLength':200,'description':'what it is for, stored as the secret\'s comment'},
             **({'replace':{'type':'boolean'}} if level>=6 or free else {})},
             'required':['operation'],'additionalProperties':False}}}
 
@@ -676,7 +684,7 @@ def _homeassistant_tool(ha):
     rights=('anything (level 6 or unhinged mode)' if free else 'read only' if level<4
             else 'read, call services (POST /api/services/<domain>/<service>), save and restore dashboards')
     return {'type':'function','function':{'name':'homeassistant',
-        'description':('Home Assistant (http://192.168.10.100:8123) through the gateway; the gateway adds the access token. '
+        'description':('Home Assistant ('+HA_URL+') through the gateway; the gateway adds the access token. '
             f'You may: {rights}. Operations: entities {{search}}: "entity_id | state | name | unit" lines, the quickest way '
             'to find real entity ids. rest {method, path "/api/...", data}. websocket {message: {type, ...}}, e.g. '
             'lovelace/dashboards/list, lovelace/config {url_path} (the current dashboard config), lovelace/resources (custom '

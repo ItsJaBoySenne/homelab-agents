@@ -1,4 +1,4 @@
-"""Masking of known secret values (credentials, Agent Generated secrets) wherever the gateway returns or stores text.
+"""Masking of known secret values (credentials, generated secrets) wherever the gateway returns or stores text.
 
 One helper for every caller (credentials.redact, HTTP tools, MCP results, audit details) so the encoded forms are
 caught everywhere alike. A value (at least MIN_LENGTH characters) is replaced when it appears

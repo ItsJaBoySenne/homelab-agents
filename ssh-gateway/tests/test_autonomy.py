@@ -2,6 +2,8 @@
 
 python3 tests/test_autonomy.py   (no network, no root, nothing installed)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import os
 import subprocess
 import sys

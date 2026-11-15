@@ -1,5 +1,5 @@
 # Gateway, backend and browser tests on every push and pull request to main.
-# No secrets: the suites mock OpenRouter, TypeSafe, Infisical and SSH themselves.
+# No secrets: the suites mock OpenRouter, TypeSafe, Infisical and SSH themselves (and use throwaway local secret stores).
 name: tests
 
 on:
@@ -35,7 +35,7 @@ jobs:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: ssh-gateway/Dockerfile.api
-      - run: pip install 'paramiko>=3.5,<5'
+      - run: pip install 'paramiko>=3.5,<5' 'cryptography>=42' 'pyyaml>=6,<7'
       - name: Gateway suites
         run: |
           rc=0

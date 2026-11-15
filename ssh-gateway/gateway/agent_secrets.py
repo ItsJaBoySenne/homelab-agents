@@ -1,13 +1,15 @@
 """Agent secrets (HLA_SECRETS_V1): passwords the agents create and use without ever seeing them.
 
-Secrets live in a separate Infisical project ("Agent Generated", INFISICAL_GENERATED_PROJECT_ID) with its own machine
-identity (INFISICAL_GENERATED_CLIENT_ID/_SECRET, read and write there; falls back to the gateway's main identity). The project with the servers' SSH keys is never reachable this way.
+Secrets live in the "generated" namespace of the gateway's secret store (gateway/secret_store.py): the local encrypted
+file (HLA_SECRETS_BACKEND=local, the default) or the separate "Agent Generated" Infisical project
+(HLA_SECRETS_BACKEND=infisical, INFISICAL_GENERATED_PROJECT_ID). The platform namespace with the servers' SSH keys and
+service credentials is never reachable this way: every read and write here names the generated namespace.
 
   create   the gateway generates the value (letters and digits only, so it is safe unquoted in shell, SQL, URLs
            and YAML), stores it, and returns only the reference {{secret:NAME}}.
   use      an agent writes {{secret:NAME}} in a command or in file content; the gateway puts the value in just
            before running it. Approvals and the audit log see the reference, not the value.
-  redact   every value from this project is replaced by [secret:NAME] in all output the gateway returns, so a
+  redact   every value from this namespace is replaced by [secret:NAME] in all output the gateway returns, so a
            `cat .env` or a container inspect shows the reference again.
 
 Levels (min(agent level, "secrets" level), unhinged mode as on servers):
@@ -16,27 +18,24 @@ Levels (min(agent level, "secrets" level), unhinged mode as on servers):
   6  (or unhinged mode) replace the value of an existing secret
 
 Redaction prevents accidental leaks into chats, logs and model context. It cannot stop an agent with root that
-deliberately transforms a value (e.g. base64) before printing it; keep this project to application passwords.
+deliberately transforms a value (e.g. base64) before printing it; keep this namespace to application passwords.
 """
-import json
 import os
 import re
 import secrets as _random
 import string
 import threading
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
 
 from . import masking
-from .core import env
+from . import secret_store
+from .secret_store import GENERATED, SecretStoreError
 
 NAME = 'secrets'
 SECRET_NAME = re.compile(r'^[A-Z][A-Z0-9_]{2,63}$')
 REF = re.compile(r'\{\{secret:([A-Za-z0-9_]{1,64})\}\}')
 # The servers' credentials and the platform's own settings are never created or replaced here.
-RESERVED = ('SSH_', 'INFISICAL_', 'TOOL_GATEWAY_', 'POLICY_ADMIN_', 'AGENT_PLATFORM_', 'HA_')
+RESERVED = ('SSH_', 'INFISICAL_', 'TOOL_GATEWAY_', 'POLICY_ADMIN_', 'AGENT_PLATFORM_', 'HA_', 'HLA_SECRETS_', 'GATEWAY_CREDENTIAL_')
 KINDS = {'password': (string.ascii_letters + string.digits, 32), 'token': (string.ascii_letters + string.digits, 48),
          'hex': ('0123456789abcdef', 64)}
 OPERATIONS = {'list': 1, 'create': 4}
@@ -55,78 +54,33 @@ class SecretError(Exception):
 
 
 def configured():
-    return bool(os.getenv('INFISICAL_GENERATED_PROJECT_ID', '').strip())
-
-
-def _settings():
-    base = env('INFISICAL_URL').rstrip('/')
-    if not base.startswith('https://'): raise RuntimeError('Infisical HTTPS required')
-    project = env('INFISICAL_GENERATED_PROJECT_ID')
-    if project == os.getenv('INFISICAL_PROJECT_ID', '').strip():
-        raise RuntimeError('INFISICAL_GENERATED_PROJECT_ID must differ from the servers project')
-    environment = os.getenv('INFISICAL_GENERATED_ENV', '').strip() or os.getenv('INFISICAL_ENV', 'prod')
-    path = os.getenv('INFISICAL_GENERATED_PATH', '/').strip() or '/'
-    return base, project, environment, path
-
-
-def _call(method, base, path, payload=None, token=None):
-    """One Infisical API call; returns (status, json body or {})."""
-    data = json.dumps(payload).encode() if payload is not None else None
-    headers = {'Content-Type': 'application/json'}
-    if token: headers['Authorization'] = 'Bearer ' + token
-    req = urllib.request.Request(base + path, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return resp.status, json.loads(resp.read() or b'{}')
-    except urllib.error.HTTPError as exc:
-        try: body = json.loads(exc.read() or b'{}')
-        except ValueError: body = {}
-        return exc.code, body if isinstance(body, dict) else {}
+        return bool(secret_store.get().configured(GENERATED))
+    except SecretStoreError:
+        return False
 
 
-def _identity():
-    """The Agent Generated identity when both its settings are set, else the gateway's main identity."""
-    cid = os.getenv('INFISICAL_GENERATED_CLIENT_ID', '').strip()
-    secret = os.getenv('INFISICAL_GENERATED_CLIENT_SECRET', '').strip()
-    if cid or secret:
-        if not (cid and secret):
-            raise RuntimeError('set both INFISICAL_GENERATED_CLIENT_ID and INFISICAL_GENERATED_CLIENT_SECRET')
-        return cid, secret, 'Agent Generated identity'
-    return env('INFISICAL_CLIENT_ID'), env('INFISICAL_CLIENT_SECRET'), 'gateway identity'
-
-
-def _message(body):
-    return str((body or {}).get('message') or '')[:200]
-
-
-def _login(base):
-    cid, secret, who = _identity()
-    status, body = _call('POST', base, '/api/v1/auth/universal-auth/login', {'clientId': cid, 'clientSecret': secret})
-    if status != 200 or not body.get('accessToken'):
-        raise RuntimeError('Infisical login failed for the %s (HTTP %s) %s' % (who, status, _message(body)))
-    return body['accessToken']
+def not_configured_detail():
+    """What to set so agent secrets work, for the 503 secrets_not_configured replies."""
+    try:
+        backend = secret_store.backend_name()
+    except SecretStoreError as exc:
+        return str(exc)
+    if backend == 'infisical':
+        return 'INFISICAL_GENERATED_PROJECT_ID is not set on the gateway'
+    return 'HLA_SECRETS_KEY is not set (or not valid) on the gateway'
 
 
 def _fetch():
-    base, project, environment, path = _settings()
-    token = _login(base)
-    query = urllib.parse.urlencode({'projectId': project, 'environment': environment, 'secretPath': path})
-    status, body = _call('GET', base, '/api/v4/secrets?' + query, token=token)
-    if status != 200:
-        raise RuntimeError('Infisical refused listing the Agent Generated project (HTTP %s): %s' % (status, _message(body) or 'the identity needs read access'))
-    values, meta = {}, {}
-    for item in body.get('secrets') or []:
-        key = item.get('secretKey')
-        if isinstance(key, str):
-            values[key] = item.get('secretValue') or ''
-            meta[key] = {'name': key, 'comment': (item.get('secretComment') or '')[:200],
-                         'updated': item.get('updatedAt') or item.get('createdAt')}
-    return values, meta
+    try:
+        return secret_store.get().generated()
+    except SecretStoreError as exc:
+        raise RuntimeError(str(exc)) from None
 
 
 def load(force=False):
-    """{name: value} of the Agent Generated project, cached for CACHE_SECONDS (failures too, so a down Infisical
-    does not slow every command). Raises RuntimeError only when force is set and Infisical cannot be read."""
+    """{name: value} of the generated namespace, cached for CACHE_SECONDS (failures too, so a down store does not
+    slow every command). Raises RuntimeError only when force is set and the store cannot be read."""
     if not configured(): return {}
     with _lock:
         fresh = time.monotonic() - _cache['at'] < CACHE_SECONDS
@@ -150,7 +104,7 @@ def substitute(text):
     names = references(text)
     if not names: return text, {}
     if not configured():
-        raise SecretError(503, 'secrets_not_configured', 'INFISICAL_GENERATED_PROJECT_ID is not set on the gateway')
+        raise SecretError(503, 'secrets_not_configured', not_configured_detail())
     values = load()
     if any(n not in values for n in names):
         try: values = load(force=True)
@@ -173,7 +127,7 @@ def check(op, body, level, free):
     if op not in OPERATIONS: raise SecretError(400, 'invalid_operation', 'operation is list or create')
     if level < 1: raise SecretError(403, 'policy_denied')
     if not configured():
-        raise SecretError(503, 'secrets_not_configured', 'INFISICAL_GENERATED_PROJECT_ID is not set on the gateway')
+        raise SecretError(503, 'secrets_not_configured', not_configured_detail())
     if op == 'list': return {'op': op, 'need': 1}
     name, kind = body.get('name'), body.get('kind') or 'password'
     if not isinstance(name, str) or not SECRET_NAME.match(name):
@@ -203,34 +157,35 @@ def run(req, actor):
     if req['replace'] and not exists: raise SecretError(404, 'unknown_secret', 'No secret named ' + name + ' to replace')
     alphabet, length = KINDS[req['kind']]
     value = ''.join(_random.choice(alphabet) for _ in range(length))
-    base, project, environment, path = _settings()
     comment = ('Created by ' if not exists else 'Replaced by ') + str(actor)[:80] + ' via the Homelab Agents gateway' \
         + (': ' + req['description'] if req['description'] else '')
-    payload = {'projectId': project, 'environment': environment, 'secretPath': path, 'secretValue': value,
-               'secretComment': comment}
-    try:
-        token = _login(base)
-        if exists: status, _ = _call('PATCH', base, '/api/v4/secrets/' + name, payload, token)
-        else: status, _ = _call('POST', base, '/api/v4/secrets/' + name, {**payload, 'type': 'shared'}, token)
-    except (RuntimeError, OSError) as exc:
-        raise SecretError(502, 'secrets_unavailable', str(exc)[:200]) from None
-    if status not in (200, 201):
-        raise SecretError(502, 'secret_write_refused', 'Infisical answered HTTP %s: the gateway identity needs write access '
-                          'on the Agent Generated project' % status)
-    with _lock:
-        _cache['values'][name] = value
-        _cache['meta'][name] = {'name': name, 'comment': comment[:200], 'updated': None}
+    _write(name, value, comment, exists)
     value = None
     return {'name': name, 'kind': req['kind'], 'status': 'replaced' if exists else 'created',
             'reference': '{{secret:' + name + '}}', 'value_returned': False}
 
 
+def _write(name, value, comment, exists=None):
+    """Put one value into the generated namespace (never anywhere else) and into the cache."""
+    try:
+        secret_store.get().put(GENERATED, name, value, comment, exists=exists)
+    except SecretStoreError as exc:
+        if exc.code == 'refused':
+            raise SecretError(502, 'secret_write_refused', str(exc)[:200]) from None
+        raise SecretError(502, 'secrets_unavailable', str(exc)[:200]) from None
+    except OSError as exc:
+        raise SecretError(502, 'secrets_unavailable', type(exc).__name__) from None
+    with _lock:
+        _cache['values'][name] = value
+        _cache['meta'][name] = {'name': name, 'comment': comment[:200], 'updated': None}
+
+
 def store(name, value, actor, description='', replace=False):
     """HLA_PROXMOX_V1: store a value the gateway obtained itself (e.g. an API token Proxmox generated) under NAME in the
-    Agent Generated project, so agents can use {{secret:NAME}} without seeing it. Same reply shape as run(); the value is
+    generated namespace, so agents can use {{secret:NAME}} without seeing it. Same reply shape as run(); the value is
     never returned. An existing name is only overwritten with replace=True."""
     if not configured():
-        raise SecretError(503, 'secrets_not_configured', 'INFISICAL_GENERATED_PROJECT_ID is not set on the gateway')
+        raise SecretError(503, 'secrets_not_configured', not_configured_detail())
     if not isinstance(name, str) or not SECRET_NAME.match(name) or name.startswith(RESERVED):
         raise SecretError(400, 'invalid_name', 'not a valid secret name')
     if not isinstance(value, str) or not value:
@@ -238,21 +193,8 @@ def store(name, value, actor, description='', replace=False):
     try: exists = name in load(force=True)
     except RuntimeError as exc: raise SecretError(502, 'secrets_unavailable', str(exc)) from None
     if exists and not replace:
-        raise SecretError(409, 'secret_exists', name + ' already exists in the Agent Generated project')
-    base, project, environment, path = _settings()
+        raise SecretError(409, 'secret_exists', name + ' already exists in the generated secrets')
     note = re.sub(r'[\x00-\x1f\x7f]', ' ', str(description or ''))[:200]
     comment = ('Stored by ' if not exists else 'Replaced by ') + str(actor)[:80] + ' via the Homelab Agents gateway' + (': ' + note if note else '')
-    payload = {'projectId': project, 'environment': environment, 'secretPath': path, 'secretValue': value, 'secretComment': comment}
-    try:
-        token = _login(base)
-        if exists: status, _ = _call('PATCH', base, '/api/v4/secrets/' + name, payload, token)
-        else: status, _ = _call('POST', base, '/api/v4/secrets/' + name, {**payload, 'type': 'shared'}, token)
-    except (RuntimeError, OSError) as exc:
-        raise SecretError(502, 'secrets_unavailable', str(exc)[:200]) from None
-    if status not in (200, 201):
-        raise SecretError(502, 'secret_write_refused', 'Infisical answered HTTP %s: the identity needs write access on the '
-                          'Agent Generated project' % status)
-    with _lock:
-        _cache['values'][name] = value
-        _cache['meta'][name] = {'name': name, 'comment': comment[:200], 'updated': None}
+    _write(name, value, comment, exists)
     return {'name': name, 'status': 'replaced' if exists else 'created', 'reference': '{{secret:' + name + '}}', 'value_returned': False}

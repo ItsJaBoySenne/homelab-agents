@@ -2,6 +2,8 @@
 
 python3 tests/test_providers.py   (no database, no network: a fake xAI endpoint through httpx.MockTransport)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import asyncio
 import json
 import os

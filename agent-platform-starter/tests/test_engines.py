@@ -5,6 +5,8 @@ python3 tests/test_engines.py
   a dashboard task on a subscription model, Costs) needs a throwaway Postgres like the other backend suites:
   TEST_DATABASE_URL=... I_UNDERSTAND_THIS_WIPES_TEST_DB=1 python3 tests/test_engines.py
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import asyncio
 import json
 import os

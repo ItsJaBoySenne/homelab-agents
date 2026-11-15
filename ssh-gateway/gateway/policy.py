@@ -11,14 +11,15 @@ import json
 import re
 import time
 
-from .core import SERVERS, SERVICES, DYNAMIC
+from .core import SERVERS, SERVICES, DYNAMIC, SERVER_INFO, SANDBOX
 from . import http_tools
 
 LEVELS = {0: 'Nothing', 1: 'Read-only diagnostics', 2: 'Install allowlisted packages',
           3: 'Restart allowlisted services and containers', 4: 'Deploy approved Compose projects',
           5: 'Commands you approved once', 6: 'Free shell (no approval)'}
-# Seeded to match the gateway before policies existed: dev took approved commands, others diagnostics.
-DEFAULT_SERVER_LEVEL = {'dev': 5, 'sandbox': 6}
+# The level a server starts with: default_level from the inventory, else 6 for the sandbox and 1 (diagnostics) for others.
+DEFAULT_SERVER_LEVEL = {name: (info['default_level'] if info.get('default_level') is not None else 6 if info['sandbox'] else 1)
+                        for name, info in SERVER_INFO.items()}
 # HLA_PROXMOX_V1: the Proxmox nodes (proxmox:<node>) start off; every other service starts read-only.
 # HLA_OMADA_V1: so does the Omada controller (omada:controller).
 DEFAULT_SERVICE_LEVEL = {name: 0 for name in SERVICES if name.startswith(('proxmox:', 'omada:'))}
@@ -193,7 +194,7 @@ def update(db, change, actor):
             raise ValueError('app names are 2-40 lowercase letters, digits and dashes')
         if value is None:
             continue
-        if not isinstance(value, dict) or value.get('server') not in SERVERS or value.get('server') == 'sandbox':
+        if not isinstance(value, dict) or value.get('server') not in SERVERS or value.get('server') == SANDBOX:
             raise ValueError('app server must be a managed server other than the sandbox')
         path = value.get('path')
         # Length limits keep the deploy scripts under the gateway's 2048-character cap.

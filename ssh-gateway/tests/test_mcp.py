@@ -3,6 +3,8 @@ answers, sessions, pagination, an isError tool), the real gateway HTTP server an
 
 python3 tests/test_mcp.py   (needs paramiko importable; no network)
 """
+import os as _os, pathlib as _pl  # the fixture inventory these suites were written against (tests/fixtures/)
+_os.environ['HLA_INVENTORY'] = str(_pl.Path(__file__).resolve().parent / 'fixtures' / 'inventory.yaml')
 import base64
 import json
 import os

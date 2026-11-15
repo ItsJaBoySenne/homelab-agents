@@ -1,8 +1,9 @@
 """GitHub pull requests through the gateway (HLA_GITHUB_V1): agents push a branch and open a PR instead of merging.
 
 The token never leaves the gateway: GITHUB_TOKEN from the credential store (Connections page), else .env.gateway,
-else GITHUB_TOKEN in the Infisical folder
-INFISICAL_GITHUB_PATH (default /GitHub) of the servers project, read on every request like the Home Assistant token.
+else GITHUB_TOKEN in the secret store (folder GitHub, i.e. GitHub/GITHUB_TOKEN; the inventory's services.github.secret_path or
+INFISICAL_GITHUB_PATH change the folder), read on every request like the Home Assistant token. The github service exists
+only when the inventory has services.github.
 Without either, every call answers 503 github_not_configured.
 
 Only repositories on the allowlist (Policy page, `github.repos` in the policy) can be reached; none by default.
@@ -19,7 +20,8 @@ import re
 import urllib.error
 import urllib.request
 
-from .core import SERVICES, infisical_secrets
+from .core import SERVICES, platform_secrets
+from .secret_store import SecretStoreError
 
 NAME = 'github'
 API = SERVICES.get(NAME, ('https://api.github.com', None))[0]
@@ -46,25 +48,24 @@ def token():
 
 
 def token_source():
-    """(token, where it came from: store | env | infisical), or GitHubError github_not_configured."""
+    """(token, where it came from: store | env | secret_store), or GitHubError github_not_configured."""
     from . import credentials
     from .cli import db_open
-    # The dashboard's credential store first (Connections page), then .env.gateway, then Infisical.
+    # The dashboard's credential store first (Connections page), then .env.gateway, then the secret store.
     source = 'store'
     value = (credentials.values(db_open).get('GITHUB_TOKEN') or '').strip()
     if not value:
         source, value = 'env', os.getenv('GITHUB_TOKEN', '').strip()
     if not value:
-        source = 'infisical'
-        path = os.getenv('INFISICAL_GITHUB_PATH', '').strip() or '/GitHub'
+        source = 'secret_store'
+        path = os.getenv('INFISICAL_GITHUB_PATH', '').strip() or SERVICES.get(NAME, (None, '/GitHub'))[1] or '/GitHub'
         try:
-            value = infisical_secrets(path, ('GITHUB_TOKEN',))['GITHUB_TOKEN'].strip()
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                raise GitHubError(503, 'github_not_configured', 'no GITHUB_TOKEN in .env.gateway or in Infisical ' + path) from None
-            raise GitHubError(502, 'github_token_unavailable', 'Infisical answered HTTP %s' % exc.code) from None
-        except RuntimeError as exc:  # e.g. Infisical settings missing
-            raise GitHubError(503, 'github_not_configured', str(exc)[:200]) from None
+            value = platform_secrets(path, ('GITHUB_TOKEN',))['GITHUB_TOKEN'].strip()
+        except SecretStoreError as exc:
+            if exc.code in ('not_found', 'not_configured'):
+                raise GitHubError(503, 'github_not_configured', 'no GITHUB_TOKEN on the Connections page, in .env.gateway or in the '
+                                  'secret store (' + path.strip('/') + '/GITHUB_TOKEN)') from None
+            raise GitHubError(502, 'github_token_unavailable', str(exc)[:200]) from None
         except (OSError, KeyError, ValueError, TypeError) as exc:
             raise GitHubError(502, 'github_token_unavailable', type(exc).__name__) from None
     if not value or any(c in value for c in '\r\n '):

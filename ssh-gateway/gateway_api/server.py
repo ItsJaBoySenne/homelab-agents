@@ -2,7 +2,8 @@
 
 POST /v1/execute          tool token   {agent_id, server, mode, ...}; modes write_file {path, content, append} and
                           read_file {path, offset, length} need a free shell (level 6 or unhinged), see gateway/files.py
-GET  /v1/policy           tool token   full policy (for the dashboard)
+GET  /v1/policy           tool token   full policy (for the dashboard), plus secret_store {backend, configured} and
+                          roles {sandbox, website, traefik} (server names from the inventory, or null)
 GET  /v1/policy/effective tool token   ?agent_id=… per-server effective level for one agent
 PUT  /v1/policy           admin token  {change, actor}; the tool token alone cannot raise its own permissions
 POST /v1/approvals        admin token  {server, command, actor}: one execution of that exact command (approve-in-chat)
@@ -10,9 +11,9 @@ POST /v1/deploy           tool token {app, ref, agent_id} (level 4 on the app's 
                           sha (roll back to a commit that ran before) skips staging and is admin-only
 GET  /v1/deployments      tool token   ?app=… recent deployments
 POST /v1/homeassistant    tool token   {agent_id, operation, ...}: Home Assistant REST/WebSocket with the token from
-                          Infisical, levels per gateway/homeassistant.py (dashboard saves keep a backup)
-POST /v1/secrets          tool token   {agent_id, operation list|create, name, kind, replace}: agent secrets in the Agent
-                          Generated Infisical project; {{secret:NAME}} in commands and written files is filled in here
+                          the secret store, levels per gateway/homeassistant.py (dashboard saves keep a backup)
+POST /v1/secrets          tool token   {agent_id, operation list|create, name, kind, replace}: agent secrets in the generated
+                          namespace of the secret store; {{secret:NAME}} in commands and written files is filled in here
                           and every value is redacted from what POST endpoints return (gateway/agent_secrets.py)
 GET  /v1/audit            tool or admin token  ?agent=&server=&action=&q=&since=&until=&limit=&before_id=&facets=1
                           the audit log, newest first (max 200 per page), secrets masked (gateway/audit.py)
@@ -71,6 +72,7 @@ import hmac,json,os,time
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import urlsplit,parse_qs
 from gateway.core import SERVERS,execute
+from gateway import core, secret_store
 from gateway.autonomy import resolve as resolve_maintenance, outcome as maintenance_outcome, TIMEOUT as MAINTENANCE_TIMEOUT
 from gateway.cli import db_open,digest,DIAGNOSTICS
 from gateway import policy, investigate, deploy, files, homeassistant, agent_secrets, github, audit as audit_log, credentials as creds
@@ -89,7 +91,7 @@ def audit(db,server,action,d,result=None,actor=None,agent=None,detail=None,task=
                (int(time.time()),server,action,d,result and result['exit_code'],int(bool(result and result['timed_out'])),int(bool(result and result['truncated'])),actor,
                 audit_log.agent_id(agent),audit_log.mask(detail[:4000],known_secrets()) if isinstance(detail,str) else None,task))
 
-KNOWN_ENV_SECRETS=('GITHUB_TOKEN','INFISICAL_CLIENT_SECRET','INFISICAL_GENERATED_CLIENT_SECRET')
+KNOWN_ENV_SECRETS=('GITHUB_TOKEN','INFISICAL_CLIENT_SECRET','INFISICAL_GENERATED_CLIENT_SECRET','HLA_SECRETS_KEY','GATEWAY_CREDENTIAL_KEY')
 
 def known_secrets():
     # The gateway's own tokens and credentials from its environment, replaced by name wherever they appear.
@@ -98,6 +100,10 @@ def known_secrets():
     nodes=tuple(proxmox.known().items())  # HLA_PROXMOX_V1: the Proxmox node token secrets read so far
     controller=tuple(omada.known().items())  # HLA_OMADA_V1: the Omada client secret and access tokens
     return audit_log.known_secrets(agent_secrets,(('TOOL_GATEWAY_TOKEN',TOKEN),('POLICY_ADMIN_TOKEN',ADMIN_TOKEN))+env_values+stored+nodes+controller)
+
+def roles():
+    """Which inventory servers have a role (the dashboard and the agent platform show and use these names)."""
+    return {'sandbox':core.SANDBOX,'website':core.WEBSITE_SERVER,'traefik':core.TRAEFIK_SERVER}
 
 def valid_command(cmd):
     return isinstance(cmd,str) and bool(cmd.strip()) and len(cmd)<=2048 and '\x00' not in cmd
@@ -120,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith('/v1/mcp/'):return self.mcp_get(db,url)
             if url.path=='/v1/credentials':
                 if not self.authorized(ADMIN_TOKEN):return self.reply(401,{'error':'policy_admin_token_required'})
-                return self.reply(200,creds.listing(db))
+                return self.reply(200,{**creds.listing(db),'secret_store':secret_store.describe()})
             if url.path=='/v1/http_tools' or url.path.startswith('/v1/http_tools/'):
                 # HLA_HTTP_TOOLS_V1: definitions for the dashboard; credentials appear by name, whether stored or not.
                 if not self.authorized(ADMIN_TOKEN):return self.reply(401,{'error':'policy_admin_token_required'})
@@ -143,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.reply(200,{'requests':routes.requests(db,status)})
                 try:return self.reply(200,routes.listing(db,execute))
                 except routes.RouteError as exc:return self.reply(exc.status,{'error':exc.error,'detail':exc.detail})
-            if url.path=='/v1/policy':return self.reply(200,policy.snapshot(db))
+            if url.path=='/v1/policy':return self.reply(200,{**policy.snapshot(db),'secret_store':secret_store.describe(),'roles':roles()})
             if url.path=='/v1/audit':
                 params={k:v[0] for k,v in parse_qs(url.query).items()}
                 try:
@@ -155,7 +161,7 @@ class Handler(BaseHTTPRequestHandler):
             if url.path=='/v1/policy/effective':
                 agent=(parse_qs(url.query).get('agent_id') or [''])[0]
                 return self.reply(200,{'agent_id':agent,'servers':policy.effective(db,agent),
-                                       'services':policy.effective_services(db,agent)})
+                                       'services':policy.effective_services(db,agent),'roles':roles()})
         return self.reply(404,{'error':'not_found'})
 
     def websites(self,db,url):
@@ -173,6 +179,8 @@ class Handler(BaseHTTPRequestHandler):
                 audit(db,websites.NAME,'agent_websites_denied',digest(websites.NAME,'read'),agent=agent,task=task,
                       detail='needs level 1 on '+' and '.join(websites.NEEDS))
                 return self.reply(403,{'error':'policy_denied','detail':'reading the websites needs level 1 on '+' and '.join(websites.NEEDS),'level':level})
+        if websites.WEBSITE_SERVER not in SERVERS or websites.TRAEFIK_SERVER not in SERVERS:
+            return self.reply(503,{'error':'websites_not_configured','detail':'the inventory names no server with role website and role traefik'})
         try:data,ran=websites.get(execute,refresh=refresh)
         except websites.RateLimited as exc:
             return self.reply(429,{'error':'refresh_rate_limited','retry_after':exc.retry,'detail':f'refreshed less than {websites.REFRESH_SECONDS} s ago'})
@@ -628,7 +636,7 @@ class Handler(BaseHTTPRequestHandler):
                 ref=sha
             elif not deploy.valid_ref(ref):return self.reply(400,{'error':'invalid_ref'})
             staging=sha is None and app['staging']
-            if staging and policy.snapshot(db)['servers'].get('sandbox',{}).get('level',0)<1:
+            if staging and (not core.SANDBOX or policy.snapshot(db)['servers'].get(core.SANDBOX,{}).get('level',0)<1):
                 return self.reply(409,{'error':'staging_unavailable'})
             if not deploy.claim(app['name']):return self.reply(409,{'error':'deploy_in_progress'})
             try:ident=deploy.start(db,app,ref,who.strip())

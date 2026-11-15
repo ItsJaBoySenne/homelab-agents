@@ -1,7 +1,7 @@
 # Homelab Agents SSH Gateway
 
-The only component that holds SSH access to the fleet. It fetches keys and pinned host fingerprints from
-Infisical per request and enforces what may run where; the agent platform only asks. Two entry points
+The only component that holds SSH access to the fleet. It reads keys from its secret store (an encrypted local file
+by default, or Infisical) per request, connects only to the servers in the inventory and enforces what may run where; the agent platform only asks. Two entry points
 share the same code and audit database:
 
 - **API** (`ssh-gateway-api`, used by the agent platform): `POST /v1/execute` on the private Docker network
@@ -64,50 +64,105 @@ errors, and confirms the result with `dpkg-query`. A restart confirms `systemctl
 last 20 journal lines if the unit is not running. Responses include
 `outcome: {verified, version | service_state, retried_after_index_refresh, error_class}`.
 
-## Server profiles
+## Inventory (servers and integrations)
 
-The example inventory in `gateway/core.py` (`SERVERS`); edit it to match your servers.
+Servers and integrations are configuration, not code: one file, `config/inventory.yaml` at the repository root
+(start from `config/inventory.example.yaml`), mounted read-only into the gateway and the agent platform at
+`/config/inventory.yaml` (`HLA_INVENTORY` overrides the path). The loader is `gateway/inventory.py`;
+`agent-platform-starter/inventory.py` is an identical copy (a test keeps them equal).
 
-| `--server` | Infisical secret path | Pinned IP |
-|---|---|---|
-| `dev` | `/servers/dev` | `192.168.10.104` |
-| `jellyfin` | `/servers/jellyfin` | `192.168.10.101` |
-| `docker` | `/servers/docker` | `192.168.10.102` |
-| `traefik` | `/servers/traefik` | `192.168.30.103` |
-| `omada` | `/servers/omada` | `192.168.20.101` |
-| `public-website` | `/servers/public-website` | `192.168.30.11` |
-| `db-01` | `/servers/db-01` | `192.168.10.107` |
-| `fs-01` | `/servers/fs-01` | `192.168.10.108` |
-| `sandbox` | `/servers/sandbox` | `192.168.40.204` (a disposable VM on an isolated VLAN) |
-
-Each folder must contain `SSH_HOST`, `SSH_USER` = `svc-hla-agent`, `SSH_PRIVATE_KEY` and
-`SSH_HOST_FINGERPRINT` (the exact trusted `SHA256:...` string); `SSH_KEY_PASSPHRASE` is optional.
-Servers are prepared with `../ssh-fleet`. VMs the gateway creates on Proxmox are added to this list at runtime
-(`servers_dynamic`, key in the credential store, fingerprint recorded on first contact; see **Proxmox VE** below).
-
-## Configuration and deploy
-
-`.env.gateway` (see `.env.gateway.example`) holds the gateway's own Infisical identity, `TOOL_GATEWAY_TOKEN` and
-`POLICY_ADMIN_TOKEN` (both with the same values as in the agent platform's `.env`).
-`./dc` is `docker compose` with both compose files.
-
-```bash
-cd homelab-agents/ssh-gateway
-sudo ./dc up -d --build ssh-gateway-api          # deploy or update the API
-sudo ./dc logs --tail 50 ssh-gateway-api
-python3 tests/test_autonomy.py                   # maintenance scripts against stand-in apt/systemd/docker
-python3 tests/test_policy.py                     # API + policy rules (needs paramiko; SSH is stubbed)
-python3 tests/test_investigate.py                # path/container investigations, run on a local folder
-python3 tests/test_files.py                      # write_file/read_file scripts, run on a local folder
-python3 tests/test_github.py                     # GitHub pull requests: policy, allowlist, levels (GitHub is stubbed)
+```yaml
+servers:
+  - name: server1          # lowercase letters, digits, . _ - (also the Policy and audit name)
+    host: 192.168.1.10     # IP or DNS name, pinned: the gateway connects only here
+    user: svc-hla-agent    # default; any Unix user (ssh-fleet/ creates svc-hla-agent)
+    port: 22               # default
+    description: "Docker host"
+    sandbox: false         # true for the one disposable sandbox VM (free shell, deploy staging, reset)
+    # role: website | traefik      the public website server / the Traefik host (Websites, Routes)
+    # default_level: 1             the policy level it starts with (sandbox 6, others 1)
+    # host_fingerprint: "SHA256:…" pinned ed25519 host key (also spelled host_key_fingerprint; a list is allowed)
+    # vmid: 110 / node: pve        its Proxmox VMID and node (never offered for new VMs; the sandbox reset uses them)
+services:                  # omit a block to disable that integration
+  proxmox: {url: https://192.168.1.5:8006, nodes: [pve], reserved_vmids: [100], verify_tls: true}
+  omada: {url: https://192.168.1.2, site: Default, verify_tls: false}
+  homeassistant: {url: http://192.168.1.20:8123}
+  github: {}
+public_ips: []             # the router's public IPs (DNS checks of routes); empty = unknown
 ```
 
-CLI (approvals execute in the remote user's shell, so an approved `sudo` command runs as root on dev):
+Validation is strict: unknown keys, duplicate names, two sandboxes, bad addresses or URLs stop the gateway at start
+with one line naming the file, the entry and the problem (`INVENTORY ERROR: …`). A missing file at the default path is
+an empty inventory: the platform runs (chat, agents) without server tools; `servers: []` is the same. A folder where
+the file should be (Docker creates one when the host file is missing) is reported as such.
+
+SSH: each server's key is `servers/<name>/SSH_PRIVATE_KEY` in the secret store (`SSH_KEY_PASSPHRASE` optional), the
+connection goes to `host:port` as `user`, and only an **ed25519 host key** listed for that server is accepted (no
+trust-on-connect, no `StrictHostKeyChecking=no`). The pinned key comes from `host_fingerprint` in the inventory, or
+else `servers/<name>/SSH_HOST_FINGERPRINT` in the secret store, which the owner records explicitly:
 
 ```bash
-sudo ./dc --profile tools run --rm ssh-gateway diagnostic --server dev identity
-sudo ./dc --profile tools run --rm -it ssh-gateway approve --server dev --command 'sudo -n id'
+python -m gateway.cli secrets import-ssh-key server1 /path/to/key     # or /dev/stdin, or - (piped)
+python -m gateway.cli secrets pin-host-key server1                     # trust on first use, done by you: prints the
+# fingerprint it recorded; compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server
 ```
+
+Without either, every call to that server fails with a message naming `pin-host-key`. Older Infisical folders may
+still hold `SSH_HOST` / `SSH_USER`: when present they must equal the inventory. Servers are prepared with
+`../ssh-fleet`. VMs the gateway creates on Proxmox are added at runtime (`servers_dynamic`, key in the credential
+store, fingerprint recorded on first contact; see **Proxmox VE** below). `python -m gateway.cli servers` lists them all.
+
+## Secret store
+
+`gateway/secret_store.py` is the one interface every module uses for secrets. `HLA_SECRETS_BACKEND` chooses the backend:
+
+- **`local`** (default): `${HLA_SECRETS_DIR:-/data/secrets}/secrets.enc`, on the named volume `gateway_secrets`
+  (the image creates `/data/secrets` owned by uid 65532, mode 700). The whole file is one Fernet token (AES-128-CBC +
+  HMAC-SHA256) keyed by `HLA_SECRETS_KEY`, 32 random bytes in base64:
+  `python -c "import secrets,base64;print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"`.
+  Names and values are both inside the encryption. Writes hold an exclusive `flock` on `secrets.lock`, re-read the
+  file, write a temporary file (mode 0600, fsync) and rename it over `secrets.enc` (then fsync the folder): readers see
+  the old or the new file, concurrent writers never lose a change. A wrong key is a clear `wrong_key` error and the
+  file is never overwritten then. **Losing the key loses the secrets**; back up the key and the volume separately.
+- **`infisical`**: the previous setup, unchanged: `INFISICAL_URL`, `INFISICAL_CLIENT_ID/_SECRET`,
+  `INFISICAL_PROJECT_ID`, `INFISICAL_ENV` for the platform folders; `INFISICAL_GENERATED_PROJECT_ID` (+ optional own
+  identity `INFISICAL_GENERATED_CLIENT_ID/_SECRET`, `INFISICAL_GENERATED_ENV`, `INFISICAL_GENERATED_PATH`) for the
+  generated secrets. The INFISICAL_* settings matter only with this backend.
+
+Two namespaces, as before: **platform** (what you put in; agents can never read or write it) and **generated**
+(agent secrets, `{{secret:NAME}}`). Platform names are `FOLDER/KEY`; the folders are the Infisical folders of the old
+layout, so an Infisical project keeps working:
+
+| Secret | Used for |
+|---|---|
+| `servers/<name>/SSH_PRIVATE_KEY`, `SSH_HOST_FINGERPRINT`, `SSH_KEY_PASSPHRASE` (optional) | each inventory server |
+| `Proxmox/<node>/TOKEN_ID`, `Proxmox/<node>/TOKEN_SECRET` | each Proxmox node |
+| `Omada/CLIENT_ID`, `Omada/CLIENT_SECRET`, `Omada/APPLICATION_NAME` (optional) | the Omada Open API app |
+| `HomeAssistant/HA_TOKEN` | Home Assistant |
+| `GitHub/GITHUB_TOKEN` | GitHub (after the Connections page and `GITHUB_TOKEN` in `.env.gateway`) |
+
+A server or service can name another folder with `secret_path` in the inventory. Generated names are flat
+(`A-Z 0-9 _`); the reserved prefixes (`SSH_`, `INFISICAL_`, `TOOL_GATEWAY_`, `POLICY_ADMIN_`, `AGENT_PLATFORM_`, `HA_`,
+`HLA_SECRETS_`, `GATEWAY_CREDENTIAL_`) can't be created there, and `{{secret:…}}` only ever resolves generated names.
+
+Owner CLI (values come from stdin or a file, never from the command line, and are never printed):
+
+```bash
+G='sudo ./dc exec -T ssh-gateway-api python -m gateway.cli'
+$G secrets status                                  # backend, usable or not, how many names
+$G secrets list [--generated]                      # names only
+printf %s "$TOKEN" | $G secrets set GitHub/GITHUB_TOKEN        # typed without echo when stdin is a terminal
+$G secrets set APP_PASSWORD --generated < file
+$G secrets delete HomeAssistant/HA_TOKEN
+$G secrets import-ssh-key server1 /dev/stdin < ~/.ssh/hla/server1   # [--fingerprint SHA256:…]
+$G secrets pin-host-key server1
+$G secrets export TRAEFIK_BASIC_SHOP --generated --out /dev/stdout > pw.txt   # never to a terminal; or --out FILE (new, 0600)
+```
+
+The dashboard shows only the backend name (`GET /v1/policy` and `GET /v1/credentials` carry
+`secret_store: {backend, configured}`) and mentions Infisical only when it is the backend. The dashboard's credential
+store (Connections page, `gateway/credentials.py`) uses `GATEWAY_CREDENTIAL_KEY`, or when that is empty a key derived
+from `HLA_SECRETS_KEY`, so one generated key is enough.
 
 ## Deployments (Git/Compose, level 4)
 
@@ -144,8 +199,8 @@ read the sandbox's (read-only) deploy key: they can read that repository's code,
 ## Home Assistant (services)
 
 `homeassistant` is a service, not an SSH server: agents call `POST /v1/homeassistant` and the gateway adds the token.
-It reads `HA_URL` and `HA_TOKEN` from the `/HomeAssistant` folder of the same Infisical project and environment as the
-server profiles, on every request. `HA_URL` must equal the URL pinned in `gateway/core.py` (`http://192.168.10.100:8123`).
+It exists when the inventory has `services.homeassistant.url`, and reads `HomeAssistant/HA_TOKEN` from the secret
+store on every request (an `HA_URL` kept there, from older Infisical setups, must equal the inventory URL).
 The token never leaves the gateway. Its level is set in Policy like a server's (seeded at 1):
 
 - 1: read (entities, `GET /api/...`, read-only WebSocket commands such as `lovelace/config` and the registries)
@@ -158,10 +213,10 @@ Use a dedicated HA user's long-lived token. A non-admin user can't save dashboar
 ## Agent secrets (services)
 
 `secrets` is a service too: passwords the agents create and use without ever seeing them (`POST /v1/secrets`,
-`gateway/agent_secrets.py`). They live in a separate Infisical project, `INFISICAL_GENERATED_PROJECT_ID` ("Agent
-Generated"), with its own machine identity (`INFISICAL_GENERATED_CLIENT_ID` and `INFISICAL_GENERATED_CLIENT_SECRET`;
-without them the gateway's main identity is used) that needs **read and write** there. The project with the servers' SSH keys can't be
-used this way.
+`gateway/agent_secrets.py`). They live in the **generated** namespace of the secret store (see **Secret store**): in
+`secrets.enc` with the local backend, or in the separate Infisical project `INFISICAL_GENERATED_PROJECT_ID` ("Agent
+Generated", identity with **read and write** there) with the Infisical backend. The platform namespace with the
+servers' SSH keys can't be reached this way.
 
 - **create** `{name, kind}`: the gateway generates the value (32 letters and digits, 48 for `token`, 64 hex for `hex`),
   stores it with a comment naming the agent, and returns only `{{secret:NAME}}`. An existing name is not overwritten.
@@ -177,9 +232,9 @@ agent with root that deliberately encodes a value before printing it, so keep th
 ## GitHub pull requests (services)
 
 `github` is a service as well (`POST /v1/github`, `gateway/github.py`): project agents push a branch and open a pull
-request instead of merging into main themselves. The token stays in the gateway: `GITHUB_TOKEN` in `.env.gateway`, or
-`GITHUB_TOKEN` in the Infisical folder `INFISICAL_GITHUB_PATH` (default `/GitHub`) of the servers project, read on every
-request. Without one, calls answer 503 `github_not_configured`. Use a fine-grained token limited to the repositories
+request instead of merging into main themselves. It exists when the inventory has `services.github`. The token stays
+in the gateway: the Connections page, `GITHUB_TOKEN` in `.env.gateway`, or `GitHub/GITHUB_TOKEN` in the secret store
+(`INFISICAL_GITHUB_PATH` or the inventory's `secret_path` change the folder), read on every request. Without one, calls answer 503 `github_not_configured`. Use a fine-grained token limited to the repositories
 you allow, with Contents and Pull requests read/write (Commit statuses/Checks read for the checks summary).
 
 Only repositories on the allowlist (Policy page → GitHub, stored as `github.repos` in the policy) can be reached; the
@@ -199,7 +254,7 @@ default to direct merges and PR mode is opt-in. Future work: a gateway `push_bra
 from the sandbox repository with the gateway's token, never `main`), so no write credential has to live on the sandbox.
 
 **Connections page** (admin token, read only): `POST /v1/github {actor, operation: "status"}` reports where the token
-comes from (`store` = credential store, `env` = `.env.gateway`, `infisical`), the login and name from `GET /user`, and the
+comes from (`store` = credential store, `env` = `.env.gateway`, `secret_store`), the login and name from `GET /user`, and the
 scopes of a classic token (`X-OAuth-Scopes`; fine-grained tokens have none); `{operation: "list_repos"}` lists the
 repositories the token reaches (`/user/repos`, 100 per page, at most 300, `truncated` beyond) with their allowlist and
 merge state. Agents cannot call either (`invalid_operation`). The token is never returned.
@@ -441,12 +496,13 @@ Backups never go into the dynamic folder: Traefik's file provider loads **every*
 (never `172.16.0.0/12`: Traefik sits on a Docker bridge in that range and IPv6 clients arrive through docker-proxy with
 such addresses; the file says so in a comment); `basic_auth` = Traefik `basicAuth` (`removeHeader: true`);
 `lan_only+basic_auth` = both (allow-list first). Staging defaults to `lan_only+basic_auth`, production to `public`. The
-password is generated in the Agent Generated Infisical project as `TRAEFIK_BASIC_<ROUTE>` (letters and digits, 32
+password is generated in the generated secrets as `TRAEFIK_BASIC_<ROUTE>` (letters and digits, 32
 characters) through `gateway/agent_secrets.py` and hashed here with apr1 (MD5-crypt, `$apr1$`, the same as
 `htpasswd -m` / `openssl passwd -apr1`). Only the hash goes into the file (and the gateway database); the password never
-leaves Infisical and the gateway. The dashboard shows the user name and the secret's name; read the password in Infisical.
-Changing the user, or `refresh_password: true` after you changed the value in Infisical, hashes it again. Removing basic
-auth keeps the secret in Infisical.
+leaves the secret store and the gateway. The dashboard shows the user name and the secret's name; read the password in
+Infisical (Infisical backend) or with `secrets export TRAEFIK_BASIC_<ROUTE> --generated --out FILE` (local backend).
+Changing the user, or `refresh_password: true` after you changed the value, hashes it again. Removing basic auth keeps
+the secret.
 
 **TLS**: entry point `websecure` (plus validated extra entry points, never `traefik`), `tls.certResolver` = the resolver
 most hand-written routers use (from the API), or `TRAEFIK_CERT_RESOLVER`. HTTP is redirected to HTTPS by the `web` entry point.
@@ -513,24 +569,22 @@ gone; run the three file commands again. The file must exist before the first ro
 
 ## Proxmox VE (services, VMs the platform creates)
 
-`gateway/proxmox.py` (stdlib + paramiko) talks to the Proxmox VE API of both nodes. Each node is a service with its own
-level, **0 (off)** until you raise it on the Policy page or the dashboard's **Infrastructure** view:
+`gateway/proxmox.py` (stdlib + paramiko) talks to the Proxmox VE API of every node in the inventory
+(`services.proxmox.nodes`). Each node is a service `proxmox:<node>` with its own level, **0 (off)** until you raise it
+on the Policy page or the dashboard's **Infrastructure** view. A node is a name (it uses `services.proxmox.url`) or
+`{name, url, tls_name, label}` for a separate install. VMIDs in `reserved_vmids` and every server's `vmid` are never
+offered for new VMs.
 
-| Service | Node | Infisical folder (servers project) | Pinned IP | TLS name checked | CA file |
-|---|---|---|---|---|---|
-| `proxmox:proxmox` | node 1 `proxmox` | `/Proxmox/Node_1` | `192.168.20.30` | `proxmox.home.arpa` | `certs/proxmox-ca.pem` |
-| `proxmox:pve2` | node 2 `pve2` | `/Proxmox/Node_2` | `192.168.20.31` | `pve2.example.com` | `certs/pve2-ca.pem` |
+**Credentials**: `Proxmox/<node>/TOKEN_ID` (`user@realm!name`) and `Proxmox/<node>/TOKEN_SECRET` in the secret store,
+cached 60 s (older folders may also hold `NODE_IP` / `NODE_PORT`, which must then equal the inventory URL). The secret
+never leaves the gateway: it is replaced by `[secret:PVE_<NODE>_TOKEN_SECRET]` in every reply and audit row.
 
-**Credentials**: each folder holds `NODE_IP` (must equal the pinned IP; `https://IP:8006` is accepted too), `NODE_PORT`,
-`TOKEN_ID` (`user@realm!name`) and `TOKEN_SECRET`, read with the gateway's own Infisical identity and cached 60 s. The
-secret never leaves the gateway: it is replaced by `[secret:PVE_<NODE>_TOKEN_SECRET]` in every reply and audit row.
-`/PVE2/Agents` (the sandbox-reset token of the agent router) is not used.
-
-**TLS** is always verified, never switched off. The gateway connects to the pinned IP and checks the certificate chain
-against that node's own CA (the node's `/etc/pve/pve-root-ca.pem`) and the name against the TLS name above (sent as SNI),
-so it works although node 1's certificate does not list 192.168.20.30. `./dc` copies `proxmox-ca.pem` and `pve2-ca.pem`
-from `../agent-platform-starter/` into `certs/` when missing; the image copies `certs/` to `/srv/certs`. Overrides:
-`PROXMOX_CA_DIR`, `PROXMOX_CA_PROXMOX` / `PROXMOX_CA_PVE2` (file), `PROXMOX_TLS_NAME_PROXMOX` / `PROXMOX_TLS_NAME_PVE2`.
+**TLS** (`verify_tls: true`, the default): the gateway connects to the node's address and checks the certificate chain
+against that node's own CA, `certs/<node>-ca.pem` (copy the node's `/etc/pve/pve-root-ca.pem`; without the file the
+system CAs are used, for a publicly trusted certificate), and the name against `tls_name` (default: the URL's host),
+sent as SNI, so a certificate that does not list the IP still works. The image copies `certs/` to `/srv/certs`.
+Overrides: `PROXMOX_CA_DIR`, `PROXMOX_CA_<NODE>` (file; a missing explicit file is an error), `PROXMOX_TLS_NAME_<NODE>`.
+`verify_tls: false` switches both checks off for every node (encrypted, not authenticated); not recommended.
 
 **Levels** (min(agent level, `proxmox:<node>` level); unhinged mode lifts level-5 agents to 5, never to 6):
 
@@ -614,7 +668,8 @@ for p in /vms /storage /nodes /sdn/zones/localnetwork; do
   pveum acl modify "$p" --users hla-agents@pve --roles HomelabAgents
   pveum acl modify "$p" --tokens 'hla-agents@pve!gateway' --roles HomelabAgents
 done
-# Infisical /Proxmox/Node_<n>: TOKEN_ID=hla-agents@pve!gateway, TOKEN_SECRET=<the secret>
+# secret store: Proxmox/<node>/TOKEN_ID = hla-agents@pve!gateway, Proxmox/<node>/TOKEN_SECRET = <the secret>
+#   (python -m gateway.cli secrets set Proxmox/<node>/TOKEN_SECRET, value on stdin)
 ```
 
 `create_audit_token` also needs `User.Modify` on `/access`, `Realm.AllocateUser` on `/access/realm/pve` and
@@ -635,14 +690,15 @@ Settings in `.env.gateway`: `PROXMOX_ALLOWED_NETS` (comma-separated IPv4 network
 
 ## Omada controller (services)
 
-`gateway/omada.py` (HLA_OMADA_V1) reaches the Omada Software Controller on 192.168.20.101 through its **Open API**, as
-service `omada:controller` (starts at level 0 = off). Agents use the `omada` tool; the dashboard shows the connection on
+`gateway/omada.py` (HLA_OMADA_V1) reaches the Omada Software Controller at `services.omada.url` of the inventory
+through its **Open API**, as service `omada:controller` (starts at level 0 = off). `site` there is the site used when
+a request names none and the controller has several. Agents use the `omada` tool; the dashboard shows the connection on
 the Infrastructure view.
 
 **Setup.** In the controller: Global View → Settings → Platform Integration → Open API → add an application in **Client**
-mode with the sites it may manage. Put its `APPLICATION_NAME`, `CLIENT_ID` and `CLIENT_SECRET` in Infisical `/Omada`
-(servers project, read by the gateway's identity). Rebuild the gateway, open Infrastructure → Omada, compare the shown
-certificate fingerprint with the one your browser shows for https://192.168.20.101:8043, and click **Trust**. Then set the
+mode with the sites it may manage. Put its `CLIENT_ID` and `CLIENT_SECRET` (and optionally `APPLICATION_NAME`) in the secret store as `Omada/CLIENT_ID`,
+`Omada/CLIENT_SECRET`, `Omada/APPLICATION_NAME`. Restart the gateway, open Infrastructure → Omada, compare the shown
+certificate fingerprint with the one your browser shows for the controller URL, and click **Trust**. Then set the
 agents' level there (or on the Policy page).
 
 **Flow.** `GET /api/info` (no credentials) → `omadacId`; `POST /openapi/authorize/token?grant_type=client_credentials`
@@ -650,7 +706,8 @@ agents' level there (or on the Policy page).
 controller answers -44112/-44113 or HTTP 401); calls go to `/openapi/v1/{omadacId}/...` with
 `Authorization: AccessToken=<token>`. Replies are `{errorCode, msg, result}`; a non-zero `errorCode` is an error.
 
-**TLS.** With `certs/omada-ca.pem` (or `OMADA_CA`) the chain is verified against that file only (`OMADA_TLS_NAME` adds a
+**TLS.** With `verify_tls: true` in the inventory the chain (against `certs/omada-ca.pem` / `OMADA_CA` when present, else
+the system CAs) and the host name are always verified. Otherwise: with `certs/omada-ca.pem` (or `OMADA_CA`) the chain is verified against that file only (`OMADA_TLS_NAME` adds a
 name check). Otherwise the leaf certificate's SHA-256 is pinned: first contact records it as *pending*, and nothing with
 credentials (not even the token request) is sent until the owner trusts it; a different certificate later blocks every
 call again (`certificate_changed`) until the owner trusts the new one. Only `/api/info` is read from an untrusted certificate.

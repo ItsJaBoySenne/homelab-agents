@@ -1,4 +1,4 @@
-"""Home Assistant through the gateway (HLA_HA_V1): REST and WebSocket calls with a token read from Infisical.
+"""Home Assistant through the gateway (HLA_HA_V1): REST and WebSocket calls with a token read from the secret store.
 
 The token (HA_TOKEN in /HomeAssistant) is read on every request and never leaves the gateway; HA_URL must equal the
 pinned URL in core.SERVICES. Levels are min(agent level, homeassistant level), like servers:
@@ -20,7 +20,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
 
-from .core import SERVICES, infisical_secrets
+from .core import SERVICES, platform_secrets
 
 NAME = 'homeassistant'
 PAGE = 10000                 # characters of response per call
@@ -46,10 +46,12 @@ def migrate(db):
 
 
 def connection():
-    """(base URL, token) from Infisical; the URL must match the pinned one."""
+    """(base URL, token): the URL from the inventory, HA_TOKEN from the secret store (an HA_URL kept there must match)."""
+    if NAME not in SERVICES:
+        raise RuntimeError('Home Assistant is not in the inventory (services.homeassistant)')
     pinned, path = SERVICES[NAME]
-    values = infisical_secrets(path, ('HA_URL', 'HA_TOKEN'))
-    if values['HA_URL'].strip().rstrip('/') != pinned:
+    values = platform_secrets(path, ('HA_TOKEN',), ('HA_URL',))
+    if values.get('HA_URL', pinned).strip().rstrip('/') != pinned:
         raise RuntimeError('HA_URL does not match the pinned Home Assistant URL')
     token = values['HA_TOKEN'].strip()
     if not token or any(c in token for c in '\r\n '):

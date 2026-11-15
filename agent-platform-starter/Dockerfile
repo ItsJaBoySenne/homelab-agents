@@ -43,6 +43,8 @@ COPY attachments.py .
 COPY engines.py .
 COPY engine_mcp_relay.py .
 COPY subscriptions.py .
+# HLA_INVENTORY_V1: the inventory loader (an identical copy of ../ssh-gateway/gateway/inventory.py).
+COPY inventory.py .
 
 # Modular components
 COPY tool_context/ ./tool_context/
@@ -56,7 +58,7 @@ COPY agent_tool/ ./agent_tool/
 COPY ui/ ./ui/
 
 # Optional CA certificates placed next to this Dockerfile (never committed): proxmox-ca.pem (Proxmox node),
-# pve2-ca.pem (sandbox host), infisical-ca.pem (self-signed Infisical). Public certificates: readable by the
+# <node>-ca.pem (the sandbox's Proxmox host). Public certificates: readable by the
 # unprivileged app user whatever their mode on the host. requirements.txt is listed so the COPY also works when
 # there are no *-ca.pem files at all (the features that need one then report it as missing).
 COPY --chmod=0644 requirements.txt *-ca.pem /app/

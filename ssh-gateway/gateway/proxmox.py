@@ -2,15 +2,17 @@
 onboards as SSH servers and may destroy again. Stdlib + paramiko (via gateway/core.py) only.
 
 Nodes and credentials
-  Each node is a service `proxmox:<node>` (core.SERVICES: pinned IP and Infisical folder of the servers project):
-  `proxmox:proxmox` (node 1, /Proxmox/Node_1) and `proxmox:pve2` (node 2, /Proxmox/Node_2). The folder holds NODE_IP
-  (must equal the pinned IP), NODE_PORT, TOKEN_ID and TOKEN_SECRET; read through core.infisical_secrets and cached for
+  Each node in the inventory (services.proxmox.nodes) is a service `proxmox:<node>` (core.SERVICES: the pinned address
+  from its URL and the secret-store folder Proxmox/<node>). The folder holds TOKEN_ID and TOKEN_SECRET (and, from older
+  setups, NODE_IP / NODE_PORT, which must then equal the inventory); read through core.platform_secrets and cached for
   CONFIG_SECONDS. The token secret never leaves the gateway: it is masked in every reply and audit row.
 
 TLS
-  Always verified (never disabled): the connection goes to NODE_IP, the certificate chain is checked against the node's
-  own PVE CA file (certs/<node>-ca.pem in the image) and its name against the node's TLS name (the certificate's SAN, e.g.
-  proxmox.home.arpa, sent as SNI / server_hostname), so no DNS is needed and an IP missing from the SAN does not matter.
+  Verified unless the owner sets verify_tls: false in the inventory: the connection goes to the node's address, the
+  certificate chain is checked against the node's own PVE CA file (certs/<node>-ca.pem in the image, copy it from
+  /etc/pve/pve-root-ca.pem; without that file the system CAs) and its name against the node's TLS name (the node's
+  tls_name, else the host name of its URL; sent as SNI / server_hostname), so no DNS is needed and an IP missing from
+  the SAN does not matter. verify_tls: false (not recommended) skips both checks for every node.
 
 Levels (min(agent level, proxmox:<node> level); the services start at 0 = off)
   1  inventory, snapshots (list), preview_create
@@ -19,6 +21,7 @@ Levels (min(agent level, proxmox:<node> level); the services start at 0 = off)
   6  snapshot_rollback; create_vm/create_audit_token without approval (also unhinged mode);
      destroy_vm: level 6 AND an approval of that exact VM every time, and only VMs this gateway created
   VMs named in PROXMOX_PROTECTED_NAMES (default agents-vm, secrets-vm) are never powered or rolled back by agents.
+  VMIDs in the inventory (services.proxmox.reserved_vmids and every server's vmid) are never offered for new VMs.
 
 Created VMs
   Debian 13 generic cloud image (download-url with the SHA512 from Debian's SHA512SUMS, `import` content, PVE >= 8.3)
@@ -45,15 +48,28 @@ from . import credentials as store
 from . import agent_secrets
 
 PREFIX = 'proxmox:'
-NODES = {
-    'proxmox': {'label': 'Node 1', 'ca': 'proxmox-ca.pem', 'tls_name': 'proxmox.home.arpa'},
-    'pve2': {'label': 'Node 2', 'ca': 'pve2-ca.pem', 'tls_name': 'pve2.example.com'},
-}
+SETTINGS = core.INVENTORY['services'].get('proxmox') or {}
+VERIFY_TLS = SETTINGS.get('verify_tls', True)
+
+
+def _tls_name(node):
+    if node.get('tls_name'):
+        return node['tls_name']
+    try:
+        ipaddress.ip_address(node['host'])
+        return node['host']  # an address: the certificate needs it in its SAN (or set tls_name)
+    except ValueError:
+        return node['host']
+
+
+# node -> {label, ca (file name in certs/), tls_name, host, port}, from the inventory; empty without Proxmox.
+NODES = {n['name']: {'label': n['label'], 'ca': n['name'] + '-ca.pem', 'tls_name': _tls_name(n), 'host': n['host'], 'port': n['port']}
+         for n in SETTINGS.get('nodes', [])}
 CONFIG_SECONDS = 60
 INVENTORY_SECONDS = 15
 MANAGED_TAG = 'hla-managed'
 CIUSER = 'svc-hla-agent'
-RESERVED_VMIDS = frozenset(list(range(100, 109)) + [204])
+RESERVED_VMIDS = frozenset(list(SETTINGS.get('reserved_vmids', [])) + [s['vmid'] for s in core.INVENTORY['servers'] if s.get('vmid')])
 VMID_RANGE = (100, 9999)
 LIMITS = {'cores': (1, 8), 'memory': (512, 16384), 'disk': (8, 256)}
 IMAGES = {
@@ -80,7 +96,7 @@ _TOKEN_ID = re.compile(r'^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+![A-Za-z][A-Za-z0-9._-]
 _SUM_LINE = re.compile(r'^([0-9a-f]{128})  ([A-Za-z0-9._-]+)$')
 _RESERVED_NAMES = ('proxmox', 'mcp', 'homeassistant', 'secrets', 'github', 'http-tools', 'http_tools', 'websites', 'routes', 'gateway')
 
-# Replaced in tests: the Infisical reader, the HTTP layer, the image checksum download, SSH, the IP probe and sleeping.
+# Replaced in tests: the secret reader, the HTTP layer, the image checksum download, SSH, the IP probe and sleeping.
 _secrets = None
 _fetch_url = None
 _host_fingerprint = core.host_fingerprint
@@ -152,7 +168,8 @@ def _env_key(node):
 
 
 def node_config(node):
-    """{ip, port, tls_name, ca, token_id, token_secret} of one node, from Infisical (cached CONFIG_SECONDS)."""
+    """{ip, port, tls_name, ca, token_id, token_secret} of one node: address from the inventory, token from the secret
+    store (cached CONFIG_SECONDS)."""
     if node not in NODES:
         raise ProxmoxError(404, 'unknown_node', 'nodes are ' + ', '.join(NODES))
     with _cache_lock:
@@ -160,32 +177,39 @@ def node_config(node):
         if hit and time.monotonic() - hit[0] < CONFIG_SECONDS:
             return hit[1]
     pinned, folder = core.SERVICES[service(node)]
-    reader = _secrets or core.infisical_secrets
+    shown = folder.strip('/')
+    reader = _secrets or core.platform_secrets
     try:
-        values = reader(folder, ('NODE_IP', 'NODE_PORT', 'TOKEN_ID', 'TOKEN_SECRET'))
+        values = reader(folder, ('TOKEN_ID', 'TOKEN_SECRET'), ('NODE_IP', 'NODE_PORT'))
     except Exception as exc:  # noqa: BLE001 - only the type is shown, never a value
         raise ProxmoxError(503, 'proxmox_not_configured',
-                           f'cannot read NODE_IP, NODE_PORT, TOKEN_ID and TOKEN_SECRET from Infisical {folder} ({type(exc).__name__})') from None
-    host = str(values.get('NODE_IP') or '').strip()
+                           f'cannot read TOKEN_ID and TOKEN_SECRET from the secret store ({shown}/...) ({type(exc).__name__})') from None
+    host = str(values.get('NODE_IP') or pinned).strip()
     if '://' in host:
         host = urllib.parse.urlsplit(host).hostname or ''
     host = host.split(':')[0] if host.count(':') == 1 else host
     if host != pinned:
-        raise ProxmoxError(503, 'proxmox_target_mismatch', f'NODE_IP in {folder} does not match the pinned address of {node} ({pinned})')
+        raise ProxmoxError(503, 'proxmox_target_mismatch', f'NODE_IP in {shown} does not match the pinned address of {node} ({pinned})')
     try:
-        port = int(str(values.get('NODE_PORT') or '8006').strip())
+        port = int(str(values.get('NODE_PORT') or NODES[node]['port']).strip())
         if not 1 <= port <= 65535:
             raise ValueError
     except ValueError:
-        raise ProxmoxError(503, 'proxmox_not_configured', f'NODE_PORT in {folder} is not a port number') from None
+        raise ProxmoxError(503, 'proxmox_not_configured', f'NODE_PORT in {shown} is not a port number') from None
+    if port != NODES[node]['port']:
+        raise ProxmoxError(503, 'proxmox_target_mismatch', f'NODE_PORT in {shown} does not match the inventory URL of {node}')
     token_id = str(values.get('TOKEN_ID') or '').strip()
     secret = str(values.get('TOKEN_SECRET') or '').strip()
     if not _TOKEN_ID.match(token_id) or not secret or any(c in secret for c in '\r\n= '):
-        raise ProxmoxError(503, 'proxmox_not_configured', f'TOKEN_ID (user@realm!name) or TOKEN_SECRET in {folder} is not valid')
-    ca = os.getenv('PROXMOX_CA_' + _env_key(node), '').strip() or os.path.join(ca_dir(), NODES[node]['ca'])
+        raise ProxmoxError(503, 'proxmox_not_configured', f'TOKEN_ID (user@realm!name) or TOKEN_SECRET in {shown} is not valid')
+    explicit = os.getenv('PROXMOX_CA_' + _env_key(node), '').strip()
+    ca = explicit or os.path.join(ca_dir(), NODES[node]['ca'])
     if not os.path.isfile(ca) or not os.access(ca, os.R_OK):
-        raise ProxmoxError(503, 'proxmox_ca_missing', f'the CA file of {node} is missing in the gateway image ({os.path.basename(ca)}); '
-                           'copy it into ssh-gateway/certs/ and rebuild')
+        if explicit or not VERIFY_TLS:
+            if VERIFY_TLS:
+                raise ProxmoxError(503, 'proxmox_ca_missing', f'the CA file of {node} is missing in the gateway image ({os.path.basename(ca)}); '
+                                   'copy it into ssh-gateway/certs/ and rebuild')
+        ca = None  # no node CA file: the system CAs (a publicly trusted certificate), or no checks with verify_tls: false
     cfg = {'node': node, 'ip': host, 'port': port, 'ca': ca, 'token_id': token_id, 'token_secret': secret,
            'tls_name': os.getenv('PROXMOX_TLS_NAME_' + _env_key(node), '').strip() or NODES[node]['tls_name']}
     with _cache_lock:
@@ -208,8 +232,20 @@ def forget():
 
 # ── HTTP layer ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
+def _unverified_context():
+    """Only with verify_tls: false in the inventory (the owner's explicit choice): encrypted but not authenticated."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    return ctx
+
+
 def tls_context(cafile):
-    """Verification is always on: chain against this node's CA only, and the host name against the certificate."""
+    """Verification on: chain against this node's CA (or the system CAs without one), and the host name against the
+    certificate. The only exception is verify_tls: false in the inventory (_unverified_context)."""
+    if not VERIFY_TLS:
+        return _unverified_context()
     ctx = ssl.create_default_context(cafile=cafile)
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
@@ -284,13 +320,13 @@ def api(node, method, path, params=None, timeout=20):
         status, reason, body = _http(cfg, method, path, params, timeout)
     except ssl.SSLCertVerificationError as exc:
         raise ProxmoxError(502, 'proxmox_tls_failed', f'the certificate of {node} is not trusted for {cfg["tls_name"]} '
-                           f'(checked against {os.path.basename(cfg["ca"])}): {_clean(exc.verify_message, 120)}') from None
+                           f'(checked against {os.path.basename(cfg["ca"]) if cfg["ca"] else "the system CAs"}): {_clean(exc.verify_message, 120)}') from None
     except ssl.SSLError as exc:
         raise ProxmoxError(502, 'proxmox_tls_failed', f'TLS with {node} failed ({type(exc).__name__})') from None
     except (OSError, http.client.HTTPException) as exc:
         raise ProxmoxError(502, 'proxmox_unreachable', f'{node} ({cfg["ip"]}:{cfg["port"]}) did not answer: {type(exc).__name__}') from None
     if status == 401:
-        raise ProxmoxError(502, 'proxmox_auth_failed', f'{node} refused the API token (check TOKEN_ID/TOKEN_SECRET in Infisical)')
+        raise ProxmoxError(502, 'proxmox_auth_failed', f'{node} refused the API token (check TOKEN_ID/TOKEN_SECRET in the secret store)')
     if status == 403:
         raise ProxmoxError(403, 'proxmox_permission_denied', f'{node}: {_clean(reason)}')
     if status >= 400:
@@ -691,7 +727,7 @@ def normalize_spec(db, body):
         raise ProxmoxError(400, 'invalid_spec', 'node is one of ' + ', '.join(NODES))
     vmid = _int(body, 'vmid', *VMID_RANGE, 'vmid')
     if vmid in RESERVED_VMIDS:
-        raise ProxmoxError(400, 'invalid_spec', f'VMID {vmid} is reserved (100-108 and 204 are existing servers)')
+        raise ProxmoxError(400, 'invalid_spec', f'VMID {vmid} is reserved (the inventory lists it as an existing server)')
     name = str(body.get('name') or '').strip().lower()
     if not _NAME.match(name) or any(name == r or name.startswith(r + '-') for r in _RESERVED_NAMES):
         raise ProxmoxError(400, 'invalid_spec', 'name is 2-32 lowercase letters, digits and -, starting with a letter (it becomes the '
@@ -893,7 +929,7 @@ def approval_text(req):
         return '\n'.join([f'proxmox create_audit_token on {node}',
                           f'user: {AUDIT_USER} with role PVEAuditor on / (read-only)',
                           f'token: {AUDIT_USER}!{AUDIT_TOKEN} (privilege separated, PVEAuditor on /)' + (' — replaces the existing token' if req.get('rotate') else ''),
-                          f'stored in Agent Generated as {names[0]} and {names[1]}'])
+                          f'stored in the generated secrets as {names[0]} and {names[1]}'])
     raise ValueError(op)
 
 
@@ -1262,7 +1298,7 @@ def pveum_commands(node):
             f'pveum acl modify / --users {AUDIT_USER} --roles PVEAuditor',
             f'pveum user token add {AUDIT_USER} {AUDIT_TOKEN} --privsep 1 --comment "Homelab Agents monitoring"',
             f"pveum acl modify / --tokens '{full}' --roles PVEAuditor",
-            f'# then store the token id ({full}) and the secret Proxmox printed in the Agent Generated project as '
+            f'# then store the token id ({full}) and the secret Proxmox printed in the generated secrets (gateway CLI: secrets set --generated NAME) as '
             + ' and '.join(audit_secret_names(node))]
 
 
@@ -1270,7 +1306,7 @@ def create_audit_token(req, who):
     node = req['node']
     id_name, secret_name = audit_secret_names(node)
     if not agent_secrets.configured():
-        raise ProxmoxError(503, 'secrets_not_configured', 'the token goes into the Agent Generated project: set INFISICAL_GENERATED_PROJECT_ID')
+        raise ProxmoxError(503, 'secrets_not_configured', 'the token goes into the generated secrets: ' + agent_secrets.not_configured_detail())
     real = pve_name(node)
     cap = capabilities(token_permissions(node, real), node, real)['audit_token']
     if not cap['ok']:
@@ -1294,7 +1330,7 @@ def create_audit_token(req, who):
         if id_name in stored and secret_name in stored:
             return {'node': node, 'status': 'exists', 'user': AUDIT_USER, 'token_id_secret': '{{secret:' + id_name + '}}',
                     'token_secret': '{{secret:' + secret_name + '}}', 'steps': steps + ['the token and its secrets already exist']}
-        raise ProxmoxError(409, 'token_exists', f'{AUDIT_USER}!{AUDIT_TOKEN} exists but its secret is not in the Agent Generated project; '
+        raise ProxmoxError(409, 'token_exists', f'{AUDIT_USER}!{AUDIT_TOKEN} exists but its secret is not in the generated secrets; '
                            'ask again with rotate: true to replace it (anything using the old token stops working)')
     if exists:
         api(node, 'DELETE', f'/access/users/{quoted}/token/{AUDIT_TOKEN}')
@@ -1312,7 +1348,7 @@ def create_audit_token(req, who):
         raise ProxmoxError(exc.status, exc.error, f'the token was created but could not be stored: {exc.detail}') from None
     finally:
         value = None
-    steps.append(f'stored as {id_name} and {secret_name} in Agent Generated')
+    steps.append(f'stored as {id_name} and {secret_name} in the generated secrets')
     return {'node': node, 'status': 'created', 'user': AUDIT_USER, 'token_id_secret': '{{secret:' + id_name + '}}',
             'token_secret': '{{secret:' + secret_name + '}}', 'steps': steps,
             'usage': f'e.g. prometheus-pve-exporter: user: {AUDIT_USER}, token_name: {AUDIT_TOKEN}, '

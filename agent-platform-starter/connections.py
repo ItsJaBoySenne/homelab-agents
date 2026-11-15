@@ -6,11 +6,11 @@ the gateway with POLICY_ADMIN_TOKEN (the token that may change policy); changes 
 approver, like policy edits. The gateway encrypts values with GATEWAY_CREDENTIAL_KEY, which lives only in its own
 .env.gateway.
 
-GET    /ui/api/connections               what is set up (admin token, credential store, approver)
+GET    /ui/api/connections               what is set up (admin token, credential store, secret store backend, approver)
 GET    /ui/api/credentials               names and metadata of stored credentials
 PUT    /ui/api/credentials/{name}        {value, kind, description}: store or replace (value never returned)
 DELETE /ui/api/credentials/{name}
-GET    /ui/api/github/status             token source (store / env / Infisical), login and scopes (never the token)
+GET    /ui/api/github/status             token source (store / env / secret_store), login and scopes (never the token)
 GET    /ui/api/github/repos              repositories the token reaches, with their allowlist state (max 300)
 GET    /ui/api/http-tools                tool definitions (credentials by name)
 PUT    /ui/api/http-tools/{name}         create or replace a tool
@@ -28,8 +28,8 @@ GATEWAY_URL = 'http://ssh-gateway-api:8099'
 _CREDENTIAL = re.compile(r'^[A-Z][A-Z0-9_]{2,63}$')
 _TOOL = re.compile(r'^[a-z][a-z0-9_]{1,39}$')
 NO_ADMIN = 'Set POLICY_ADMIN_TOKEN in .env and ../ssh-gateway/.env.gateway to manage connections from the dashboard'
-NO_KEY = ('The credential store is off: set GATEWAY_CREDENTIAL_KEY in ../ssh-gateway/.env.gateway '
-          '(openssl rand -base64 32) and restart the gateway')
+NO_KEY = ('The credential store is off: set HLA_SECRETS_KEY (or GATEWAY_CREDENTIAL_KEY) in ../ssh-gateway/.env.gateway '
+          'and restart the gateway')
 TEST_RESPONSE_CHARS = 4000  # what the Test button shows of a response
 
 
@@ -90,11 +90,14 @@ def build_router(dashboard_read, ui_write, require_approver, approver_status):
         dashboard_read(request)
         admin = _admin(False)
         status = {'editable': bool(admin), 'approver': approver_status(request), 'setup': None if admin else NO_ADMIN,
-                  'credentials_configured': None}
+                  'credentials_configured': None, 'secret_store': None}
         if admin:
             code, body = await _gateway('GET', '/v1/credentials', admin, timeout=8)
             if code == 200:
                 status['credentials_configured'] = bool(body.get('configured'))
+                store = body.get('secret_store') if isinstance(body.get('secret_store'), dict) else {}
+                # Only the backend name and whether it is usable (local | infisical): the UI names Infisical only when it is in use.
+                status['secret_store'] = {'backend': str(store.get('backend') or 'local'), 'configured': bool(store.get('configured'))} if store else None
                 if not body.get('configured'):
                     status['setup'] = NO_KEY
         return status
