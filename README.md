@@ -1,6 +1,6 @@
 # Homelab Agents
 
-[![tests](https://github.com/your-org/homelab-agents/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/your-org/homelab-agents/actions/workflows/tests.yml)
+[![tests](https://github.com/ItsJaBoySenne/homelab-agents/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/ItsJaBoySenne/homelab-agents/actions/workflows/tests.yml)
 
 **Self-hosted AI agents for your homelab.** Chat with agents, hand them multi-step projects and recurring checks, and
 let them look after your servers, deploy apps, manage Proxmox VMs and tune Home Assistant: with a permission level
@@ -41,7 +41,7 @@ container that holds all credentials, checks each call against your policy, runs
 On a Linux machine (VM or bare metal) with Docker:
 
 ```bash
-git clone https://github.com/your-org/homelab-agents.git && cd homelab-agents
+git clone https://github.com/ItsJaBoySenne/homelab-agents.git && cd homelab-agents
 ./setup.sh          # a few questions; generates every password and key; builds and starts the stack
 # open the URL it prints (default http://127.0.0.1:8088/ui/) and log in with the password it shows once
 ```

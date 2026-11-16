@@ -6,8 +6,7 @@ Homelab Agents lets AI models act on your infrastructure, so we take security re
 
 **Please do not open a public issue.** Report privately instead:
 
-- GitHub: **Security → Report a vulnerability** on this repository (private advisory), or
-- e-mail: `security@example.com` _(placeholder: replace with the maintainers' address)_.
+- GitHub: **Security → Report a vulnerability** on this repository (a private security advisory).
 
 Include what you found, how to reproduce it, the version (commit) and the impact you expect. We aim to acknowledge
 reports within a week and to agree on a disclosure date with you; we credit reporters unless you prefer otherwise.
