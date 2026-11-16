@@ -1656,9 +1656,12 @@ async function go(pg, view) {
     const mon = plist.find(p => p.title === 'Monitoring dashboard'), wil = plist.find(p => p.title === 'Login form');  // finished: tasks can be sent back
     if (mon) { await phone.goto((process.env.BASE || 'http://127.0.0.1:8765') + '/ui/#project=' + mon.id); await phone.click('.project-facts button:has-text("Limits…")');
       await openDialog(phone); await phone.screenshot({ path: process.env.SHOTS + '/dialog-limits-phone.png' }); await cancelDialog(phone); }
-    if (wil) { await phone.goto((process.env.BASE || 'http://127.0.0.1:8765') + '/ui/#project=' + wil.id); await phone.click('.ptabs button[data-ptab="plan"]'); await phone.click('.ptask button:has-text("Send back…") >> nth=0');
+    if (wil) { await phone.goto((process.env.BASE || 'http://127.0.0.1:8765') + '/ui/#project=' + wil.id); await phone.click('.ptabs button[data-ptab="plan"]');
+      // Screenshot only: by now earlier steps may have changed this project's tasks, so skip when no task can be sent back.
+      const sendBackBtn = phone.locator('.ptask button:has-text("Send back…"):visible').first();
+      if (await sendBackBtn.count()) { await sendBackBtn.click();
       await openDialog(phone); await phone.fill(DLG + ' textarea', 'Please rework the contact section.\n- F-1: the opening hours are wrong.\n- F-3: the map link is broken.');
-      await phone.screenshot({ path: process.env.SHOTS + '/dialog-send-back-phone.png' }); await cancelDialog(phone); }
+      await phone.screenshot({ path: process.env.SHOTS + '/dialog-send-back-phone.png' }); await cancelDialog(phone); } }
   }
   // Phone: the Infrastructure view fits the width.
   await phone.evaluate(() => document.querySelector('button[data-view="infrastructure"]').click());
