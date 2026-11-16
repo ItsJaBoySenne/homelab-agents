@@ -105,7 +105,7 @@ def gw_record(server, action, detail, code=0, actor=None, agent=None, task=None,
 os.environ['POLICY_ADMIN_TOKEN'] = 'a' * 40
 # Sandbox reset against a mocked pve2 (any valid PEM bundle works: the mock transport does no TLS).
 import certifi
-os.environ.update({'SANDBOX_PROXMOX_TOKEN_ID': 'Agents@pam!agents', 'SANDBOX_PROXMOX_TOKEN_SECRET': 'preview',
+os.environ.update({'SANDBOX_PROXMOX_TOKEN_ID': 'sandbox@pve!hla', 'SANDBOX_PROXMOX_TOKEN_SECRET': 'preview',
                    'SANDBOX_PROXMOX_CA': certifi.where()})
 
 with psycopg.connect(os.environ['DATABASE_URL'], autocommit=True) as db:

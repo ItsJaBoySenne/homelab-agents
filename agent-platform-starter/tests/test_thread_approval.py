@@ -729,7 +729,7 @@ with TestClient(appmod.app) as c:
     STATE['perms'] = perms()
 
     os.environ.pop('SANDBOX_PROXMOX_TOKEN_SECRET', None)
-    os.environ['SANDBOX_PROXMOX_TOKEN_ID'] = 'Agents@pam!agents'
+    os.environ['SANDBOX_PROXMOX_TOKEN_ID'] = 'sandbox@pve!hla'
     os.environ['SANDBOX_PROXMOX_CA'] = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tests', 'missing-ca.pem')
     info = c.get('/ui/api/sandbox').json()
     check(info['configured'] is False and 'SANDBOX_PROXMOX_TOKEN_SECRET' in info['missing'] and any('CA' in m for m in info['missing']), f'missing config reported {info["missing"]}')
@@ -742,7 +742,7 @@ with TestClient(appmod.app) as c:
     calls = [(m, p) for m, p, _, _ in STATE['proxmox']]
     check(r.status_code == 200 and calls == [('POST', '/api2/json/nodes/pve2/qemu/204/snapshot/clean/rollback'),
           ('GET', '/api2/json/nodes/pve2/tasks/UPID:pve2:0001:rollback:/status')], f'rollback with start, task awaited {calls}')
-    check(STATE['proxmox'][0][2] == 'start=1' and STATE['proxmox'][0][3] == 'PVEAPIToken=Agents@pam!agents=00000000-0000-4000-8000-000000000000', 'token header and start flag')
+    check(STATE['proxmox'][0][2] == 'start=1' and STATE['proxmox'][0][3] == 'PVEAPIToken=sandbox@pve!hla=00000000-0000-4000-8000-000000000000', 'token header and start flag')
     last = c.get('/ui/api/sandbox').json()['last_reset']
     check(last['outcome'] == 'ok' and last['actor'] == 'dashboard_session' and last['finished_at'], 'reset audited')
     STATE['proxmox'].clear(); STATE['proxmox_mode'] = 'old'

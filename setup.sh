@@ -564,7 +564,6 @@ if [ -z "$(env_get "$G_WORK" GATEWAY_CREDENTIAL_KEY)" ]; then env_set "$G_WORK" 
 for k in PROXMOX_TOKEN_ID PROXMOX_TOKEN_SECRET TYPESAFE_API_KEY; do env_clear_placeholder "$R_WORK" "$k"; done
 if [ ! -f "$ROUTER_ENV" ]; then
   [ "$(env_get "$R_WORK" PROXMOX_API_URL)" = "https://proxmox.home.arpa:8006" ] && env_set "$R_WORK" PROXMOX_API_URL ""
-  [ "$(env_get "$R_WORK" SANDBOX_PROXMOX_TOKEN_ID)" = 'Agents@pam!agents' ] && env_set "$R_WORK" SANDBOX_PROXMOX_TOKEN_ID ""
 fi
 if [ ! -f "$GATEWAY_ENV" ]; then
   [ "$(env_get "$G_WORK" PUBLIC_IPS)" = "203.0.113.10" ] && env_set "$G_WORK" PUBLIC_IPS ""
