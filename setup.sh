@@ -179,7 +179,7 @@ rand_password() {  # 24 characters, letters and digits only (easy to type on a p
 # .env files: edited as a working copy in a private temp dir, committed (with a timestamped backup) at the end
 # ---------------------------------------------------------------------------------------------------------------
 WORK=$(mktemp -d 2>/dev/null || mktemp -d -t hla-setup) || die "Could not create a temporary directory."
-# shellcheck disable=SC2329  # called by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # called by the EXIT trap (0.9 reports SC2317, newer versions SC2329)
 cleanup() {
   for _f in "$WORK"/*; do [ -f "$_f" ] && : > "$_f"; done   # blank the working copies (they hold secrets) first
   rm -rf "$WORK"
